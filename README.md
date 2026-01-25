@@ -1,0 +1,218 @@
+# Knowledge Index MCP
+
+## What is This For?
+
+A local-first semantic search server for your documents. Index PDFs, Word docs, PowerPoints, Excel files, and text/markdown, then search them using natural language via the Model Context Protocol (MCP).
+
+- **Semantic search** - Find relevant content using natural language queries
+- **Boundary-aware chunking** - Respects document structure (chapters, sections, headers)
+- **Table extraction** - Extract tables from documents as CSV
+- **Fully local** - No external APIs, no cloud services, no PyTorch
+- **Lightweight** - ONNX-based embeddings (~50MB vs ~2GB for PyTorch)
+
+## Supported Formats
+
+| Format | Extensions | Notes |
+|--------|------------|-------|
+| Text | `.txt` | Plain text |
+| Markdown | `.md`, `.markdown` | Preserves headers for boundaries |
+| PDF | `.pdf` | Text extraction with page markers |
+| Word | `.docx` | Paragraphs, headings, tables |
+| PowerPoint | `.pptx` | Slides, notes, tables |
+| Excel | `.xlsx`, `.xls` | Sheets as tables |
+
+### Why No External Services?
+
+| Component | Traditional RAG | This Server |
+|-----------|-----------------|-------------|
+| Embeddings | OpenAI API / hosted model | Local ONNX model (fastembed) |
+| Vector DB | Pinecone / Weaviate / Qdrant | Local file (usearch) |
+| Storage | Cloud / managed DB | Local `.knowledge/` directory |
+| Dependencies | PyTorch (~2GB) | ONNX Runtime (~50MB) |
+
+## Tools
+
+### `knowledge_index`
+Index a document for semantic search.
+
+```json
+{
+  "file_path": "docs/manual.pdf",
+  "source_name": "manual"
+}
+```
+
+### `knowledge_search`
+Search indexed documents using natural language.
+
+```json
+{
+  "query": "how to configure authentication",
+  "top_k": 5,
+  "expand_to_boundary": "section",
+  "max_return_tokens": 4096
+}
+```
+
+Parameters:
+- `query` - Search query
+- `sources` - Filter to specific sources (optional)
+- `top_k` - Number of results (default: 5)
+- `expand_to_boundary` - Expand results to full "section" or "chapter"
+- `max_return_tokens` - Token budget for results (default: 4096)
+- `include_siblings` - Include sibling sections when expanding
+
+### `knowledge_list`
+List all indexed sources.
+
+### `knowledge_chunk`
+Retrieve a specific chunk by ID with optional neighbors.
+
+```json
+{
+  "chunk_id": "manual:42",
+  "neighbors": 2
+}
+```
+
+### `read_document`
+Read a document without indexing. Returns formatted text.
+
+```json
+{
+  "file_path": "report.pdf",
+  "max_chars": 100000
+}
+```
+
+### `list_tables`
+List all tables in a document.
+
+```json
+{
+  "file_path": "data.xlsx"
+}
+```
+
+### `extract_table`
+Extract a specific table as CSV.
+
+```json
+{
+  "file_path": "data.xlsx",
+  "table_index": 0,
+  "max_rows": 100
+}
+```
+
+## Installation
+
+```bash
+pip install -r requirements.txt
+```
+
+Or with uv:
+
+```bash
+uv pip install -r requirements.txt
+```
+
+## Configuration
+
+Add to your Claude Desktop or MCP client config:
+
+```json
+{
+  "mcpServers": {
+    "knowledge-index": {
+      "command": "python",
+      "args": ["/path/to/knowledge-index-mcp/src/server.py"],
+      "env": {
+        "MCP_WORKING_DIR": "/path/to/your/project",
+        "KNOWLEDGE_DIR": "/path/to/store/indices"
+      }
+    }
+  }
+}
+```
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MCP_WORKING_DIR` | Base directory for resolving file paths | Current working directory |
+| `KNOWLEDGE_DIR` | Directory for storing vector indices | `.knowledge` in working dir |
+
+## Architecture
+
+Everything runs locally - no external APIs, databases, or embedding servers required.
+
+```mermaid
+flowchart TB
+    subgraph Client["MCP Client (Claude Desktop, etc.)"]
+        LLM[LLM]
+    end
+
+    subgraph MCP["Knowledge Index MCP Server"]
+        Server[server.py]
+
+        subgraph Services["Local Services"]
+            Loader[Document Loader<br/>PDF, DOCX, PPTX, XLSX]
+            Chunker[Boundary-Aware<br/>Chunker]
+            Embedder[Embedder<br/>ONNX Runtime]
+            VectorStore[Vector Store<br/>usearch]
+        end
+    end
+
+    subgraph Storage["Local Filesystem"]
+        Docs[(Source<br/>Documents)]
+        Index[(".knowledge/<br/>├── manifest.json<br/>└── vectors/<br/>    ├── index.usearch<br/>    ├── chunks.jsonl<br/>    └── boundaries.json")]
+    end
+
+    subgraph Models["Embedded Model (downloaded once)"]
+        ONNX[BAAI/bge-small-en-v1.5<br/>ONNX format ~50MB]
+    end
+
+    LLM <-->|MCP Protocol| Server
+    Server --> Loader
+    Server --> Chunker
+    Server --> Embedder
+    Server --> VectorStore
+
+    Loader -->|read| Docs
+    VectorStore <-->|read/write| Index
+    Embedder -->|load once| ONNX
+
+    style Client fill:#e1f5fe
+    style Storage fill:#fff3e0
+    style Models fill:#f3e5f5
+    style MCP fill:#e8f5e9
+```
+
+### Data Flow
+
+```mermaid
+flowchart LR
+    subgraph Index["Indexing"]
+        direction TB
+        A[Document] --> B[Load & Extract Text]
+        B --> C[Detect Boundaries]
+        C --> D[Chunk ~256 tokens]
+        D --> E[Generate Embeddings]
+        E --> F[Save to Disk]
+    end
+
+    subgraph Search["Searching"]
+        direction TB
+        G[Query] --> H[Embed Query]
+        H --> I[Vector Similarity Search]
+        I --> J[Expand to Boundaries]
+        J --> K[Return Results]
+    end
+
+    Index -.->|stored in .knowledge/| Search
+```
+
+## License
+
+MIT

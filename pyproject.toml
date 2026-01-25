@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "knowledge-index-mcp"
+version = "0.1.0"
+description = "MCP server for semantic document search with boundary-aware chunking"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+dependencies = [
+    "mcp>=1.0.0",
+    "pydantic>=2.0.0",
+    "numpy>=1.24.0",
+    # Embedding - ONNX-based, lightweight (~50x smaller than PyTorch)
+    "fastembed>=0.2.0",
+    # Vector search - pre-built wheels, no C++ compilation
+    "usearch>=2.0.0",
+    # Token counting
+    "tiktoken>=0.5.0",
+    # Document loading
+    "pdfplumber>=0.10.0",
+    "python-docx>=0.8.11",
+    "python-pptx>=0.6.21",
+    "openpyxl>=3.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[project.scripts]
+knowledge-index-mcp = "server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["src/tests"]
