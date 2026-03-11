@@ -1,16 +1,27 @@
 """
 Search tool for the mcp-knowledge MCP server.
 
-Provides semantic search across indexed documents with boundary-aware
-expansion capabilities.
+Provides hybrid semantic + text search across indexed documents with
+boundary-aware expansion capabilities. Semantic search uses vector
+similarity, while text search does O(n) exact substring and fuzzy
+token matching. Results are merged with sparsity-aware scoring.
 """
 
 from dataclasses import dataclass, field
 from typing import Optional
 
-from services.chunker import Chunk, BoundaryIndex, count_tokens
-from services.vector_store import VectorStore, SearchResult
-from services.boundary_detector import get_level_for_boundary_type
+try:
+    # Relative imports for when running as part of the package (e.g. pytest)
+    from ..services.chunker import Chunk, BoundaryIndex, count_tokens
+    from ..services.vector_store import VectorStore, SearchResult
+    from ..services.text_search import text_search, TextMatch
+    from ..services.boundary_detector import get_level_for_boundary_type
+except ImportError:
+    # Absolute imports for when running with src/ on sys.path (e.g. MCP server)
+    from services.chunker import Chunk, BoundaryIndex, count_tokens
+    from services.vector_store import VectorStore, SearchResult
+    from services.text_search import text_search, TextMatch
+    from services.boundary_detector import get_level_for_boundary_type
 
 
 @dataclass
@@ -39,6 +50,8 @@ class SearchResultItem:
     context: Optional[dict] = None  # {"before": str, "after": str}
     expanded_content: Optional[str] = None  # Full boundary content when expanded
     boundary_info: Optional[dict] = None  # Boundary metadata when expanded
+    text_score: Optional[float] = None  # Text match score if applicable
+    match_type: Optional[str] = None  # "exact_substring", "fuzzy_token", or None
 
 
 @dataclass
@@ -57,7 +70,11 @@ async def execute_search(
     embed_fn,
 ) -> SearchResponse:
     """
-    Execute a semantic search with optional boundary expansion.
+    Execute a hybrid semantic + text search with optional boundary expansion.
+
+    Runs both vector similarity search and O(n) text matching, then merges
+    results using sparsity-aware scoring: few high-confidence text matches
+    get boosted, but semantic alignment is always respected.
 
     Args:
         params: Search parameters
@@ -71,36 +88,44 @@ async def execute_search(
     # Embed the query
     query_embedding = await embed_fn(params.query)
 
-    # Collect results from all relevant stores
-    all_results: list[tuple[SearchResult, str]] = []  # (result, source_name)
+    # --- Semantic search ---
+    semantic_by_id: dict[str, tuple[float, Chunk, str]] = {}  # chunk_id -> (score, chunk, source)
 
     for source_name, store in stores.items():
-        # Filter by sources if specified
         if params.sources and source_name not in params.sources:
             continue
 
         results = store.search(
             query_embedding=query_embedding,
-            k=params.top_k * 2,  # Fetch extra for filtering/merging
+            k=params.top_k * 2,
         )
 
         for result in results:
-            all_results.append((result, source_name))
+            semantic_by_id[result.chunk.id] = (result.score, result.chunk, source_name)
 
-    # Sort by score and take top_k
-    all_results.sort(key=lambda x: -x[0].score)
-    top_results = all_results[:params.top_k]
+    # --- Text search (O(n) scan) ---
+    text_by_id: dict[str, tuple[float, str, Chunk, str]] = {}  # chunk_id -> (score, match_type, chunk, source)
+
+    for source_name, store in stores.items():
+        if params.sources and source_name not in params.sources:
+            continue
+
+        text_matches = text_search(params.query, store.chunks)
+        for match in text_matches:
+            text_by_id[match.chunk.id] = (match.score, match.match_type, match.chunk, source_name)
+
+    # --- Merge with sparsity-aware scoring ---
+    merged = _merge_results(semantic_by_id, text_by_id, params.top_k)
 
     # Build response items
     response = SearchResponse(query=params.query)
     total_tokens = 0
 
-    for result, source_name in top_results:
-        chunk = result.chunk
+    for chunk_id, final_score, chunk, source_name, text_score, match_type in merged:
         item = SearchResultItem(
             chunk_id=chunk.id,
             source_name=source_name,
-            score=result.score,
+            score=final_score,
             content=chunk.content,
             metadata={
                 "position": chunk.metadata.position,
@@ -110,6 +135,8 @@ async def execute_search(
                 "boundary_title": chunk.metadata.boundary_title,
                 "token_count": chunk.metadata.token_count,
             },
+            text_score=text_score,
+            match_type=match_type,
         )
 
         # Add context (neighboring chunks) if requested
@@ -147,6 +174,80 @@ async def execute_search(
 
     response.total_tokens = total_tokens
     return response
+
+
+def _merge_results(
+    semantic_by_id: dict[str, tuple[float, "Chunk", str]],
+    text_by_id: dict[str, tuple[float, str, "Chunk", str]],
+    top_k: int,
+) -> list[tuple[str, float, "Chunk", str, Optional[float], Optional[str]]]:
+    """
+    Merge semantic and text search results with sparsity-aware scoring.
+
+    When there are few high-confidence text matches, they get a strong boost.
+    When text matches are numerous (common words), they get minimal weight.
+    Semantic alignment always contributes significantly.
+
+    Returns:
+        List of (chunk_id, final_score, chunk, source_name, text_score, match_type)
+        sorted by final_score descending, limited to top_k.
+    """
+    # Determine text search sparsity and confidence
+    text_scores_above_threshold = [
+        score for score, _, _, _ in text_by_id.values() if score > 0.3
+    ]
+    text_hit_count = len(text_scores_above_threshold)
+
+    # Compute text_weight based on sparsity
+    if text_hit_count == 0:
+        text_weight = 0.0
+    elif text_hit_count <= 3:
+        avg_confidence = sum(text_scores_above_threshold) / text_hit_count
+        text_weight = 0.5 * avg_confidence
+    elif text_hit_count <= 10:
+        avg_confidence = sum(text_scores_above_threshold) / text_hit_count
+        text_weight = 0.3 * avg_confidence
+    else:
+        text_weight = 0.1
+
+    # Collect all chunk IDs from both result sets
+    all_chunk_ids = set(semantic_by_id.keys()) | set(text_by_id.keys())
+
+    scored: list[tuple[str, float, "Chunk", str, Optional[float], Optional[str]]] = []
+
+    for chunk_id in all_chunk_ids:
+        sem_entry = semantic_by_id.get(chunk_id)
+        txt_entry = text_by_id.get(chunk_id)
+
+        semantic_score = sem_entry[0] if sem_entry else 0.0
+        text_score = txt_entry[0] if txt_entry else 0.0
+        match_type = txt_entry[1] if txt_entry else None
+
+        # Pick chunk and source from whichever result set has it
+        if sem_entry:
+            chunk, source_name = sem_entry[1], sem_entry[2]
+        else:
+            chunk, source_name = txt_entry[2], txt_entry[3]
+
+        # Compute blended score
+        final_score = (1 - text_weight) * semantic_score + text_weight * text_score
+
+        # Override: exact substring matches with few hits get a score floor
+        # This ensures verbatim quotes always surface near the top
+        if text_score >= 0.85 and text_hit_count <= 3:
+            final_score = max(final_score, 0.8)
+
+        scored.append((
+            chunk_id,
+            final_score,
+            chunk,
+            source_name,
+            text_score if text_score > 0 else None,
+            match_type,
+        ))
+
+    scored.sort(key=lambda x: -x[1])
+    return scored[:top_k]
 
 
 def _build_context(target_chunk: Chunk, neighbors: list[Chunk]) -> Optional[dict]:
@@ -274,7 +375,7 @@ def _expand_to_boundary(
 # Tool schema for MCP registration
 SEARCH_TOOL_SCHEMA = {
     "name": "knowledge_search",
-    "description": "Search indexed documents using semantic similarity with optional boundary expansion",
+    "description": "Search indexed documents using semantic and text similarity with optional boundary expansion",
     "inputSchema": {
         "type": "object",
         "properties": {
