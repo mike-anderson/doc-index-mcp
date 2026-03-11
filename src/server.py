@@ -23,23 +23,42 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
-# Direct imports - no lazy loading
-from services import document_loader
-from services import chunker
-from services import vector_store
-from services import table_extractor
-from services.embedder import Embedder
-from tools import search_tool
-from validation import (
-    validate_input,
-    ValidationError,
-    IndexDocumentInput,
-    SearchInput,
-    GetChunkInput,
-    ReadDocumentInput,
-    ListTablesInput,
-    ExtractTableInput,
-)
+try:
+    # Relative imports for when running as part of the package
+    from .services import document_loader
+    from .services import chunker
+    from .services import vector_store
+    from .services import table_extractor
+    from .services.embedder import Embedder
+    from .tools import search_tool
+    from .validation import (
+        validate_input,
+        ValidationError,
+        IndexDocumentInput,
+        SearchInput,
+        GetChunkInput,
+        ReadDocumentInput,
+        ListTablesInput,
+        ExtractTableInput,
+    )
+except ImportError:
+    # Absolute imports for when running with src/ on sys.path
+    from services import document_loader
+    from services import chunker
+    from services import vector_store
+    from services import table_extractor
+    from services.embedder import Embedder
+    from tools import search_tool
+    from validation import (
+        validate_input,
+        ValidationError,
+        IndexDocumentInput,
+        SearchInput,
+        GetChunkInput,
+        ReadDocumentInput,
+        ListTablesInput,
+        ExtractTableInput,
+    )
 
 # Supported file extensions
 SUPPORTED_EXTENSIONS = [".txt", ".md", ".markdown", ".pdf", ".docx", ".pptx", ".xlsx", ".xls"]
@@ -48,43 +67,43 @@ SUPPORTED_TABLE_FORMATS = [".pdf", ".docx", ".xlsx", ".xls"]
 # Search tool schema
 SEARCH_TOOL_SCHEMA = {
     "name": "knowledge_search",
-    "description": "Search indexed documents using semantic and text similarity with optional boundary expansion",
+    "description": "Hybrid semantic + text search over indexed documents. Returns ~256-token chunks. Use expand_to_boundary to get full sections/chapters; increase max_return_tokens when expanding.",
     "inputSchema": {
         "type": "object",
         "properties": {
             "query": {
                 "type": "string",
-                "description": "The search query",
+                "description": "Natural language search query",
             },
             "sources": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Optional list of source names to search (searches all if not specified)",
+                "description": "Filter to specific source names (omit to search all)",
             },
             "top_k": {
                 "type": "number",
                 "default": 5,
-                "description": "Number of results to return",
+                "description": "Number of results. Lower to 1-3 when using expand_to_boundary.",
             },
             "include_context": {
                 "type": "boolean",
                 "default": True,
-                "description": "Include surrounding context snippets",
+                "description": "Include before/after context snippets",
             },
             "expand_to_boundary": {
                 "type": "string",
-                "enum": ["section", "chapter"],
-                "description": "Expand results to include full section or chapter",
+                "enum": ["chapter", "section", "subsection", "page"],
+                "description": "Expand results to full containing boundary (chapter>section>subsection>page). Increase max_return_tokens to 8192+ when using.",
             },
             "max_return_tokens": {
                 "type": "number",
                 "default": 4096,
-                "description": "Maximum tokens (tiktoken cl100k_base) to return across all results. Chunks are measured in tokens.",
+                "description": "Token budget across all results. Increase to 8192-16384 with expand_to_boundary.",
             },
             "include_siblings": {
                 "type": "boolean",
                 "default": False,
-                "description": "Include sibling sections when expanding to boundary",
+                "description": "With expand_to_boundary: also include sibling boundaries (same parent). E.g., expanding to Section 2.3 also returns Sections 2.1, 2.2, 2.4.",
             },
         },
         "required": ["query"],
@@ -161,17 +180,17 @@ class KnowledgeServer:
             return [
                 Tool(
                     name="knowledge_index",
-                    description="Index a document for semantic search with boundary-aware chunking",
+                    description="Index a document for semantic search. Detects document structure (chapters, sections, pages) as boundaries. Search with knowledge_search after indexing.",
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "file_path": {
                                 "type": "string",
-                                "description": f"Path to the document file. Supported formats: {', '.join(SUPPORTED_EXTENSIONS)}",
+                                "description": f"Path to document. Supported: {', '.join(SUPPORTED_EXTENSIONS)}",
                             },
                             "source_name": {
                                 "type": "string",
-                                "description": "Optional name for this source (defaults to filename)",
+                                "description": "Identifier for this source (defaults to filename)",
                             },
                         },
                         "required": ["file_path"],
@@ -188,18 +207,18 @@ class KnowledgeServer:
                 ),
                 Tool(
                     name="knowledge_chunk",
-                    description="Retrieve specific chunk(s) by ID with optional neighbors",
+                    description="Retrieve a chunk by ID (from search results) with optional neighbors. Prefer expand_to_boundary in knowledge_search for structure-aware context.",
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "chunk_id": {
                                 "type": "string",
-                                "description": "ID of the chunk to retrieve",
+                                "description": "Chunk ID, format: 'source_name:position' (e.g., 'my-doc:42')",
                             },
                             "neighbors": {
                                 "type": "number",
                                 "default": 0,
-                                "description": "Number of neighboring chunks to include on each side",
+                                "description": "Adjacent chunks to include on each side",
                             },
                         },
                         "required": ["chunk_id"],
@@ -207,23 +226,23 @@ class KnowledgeServer:
                 ),
                 Tool(
                     name="read_document",
-                    description="Read and extract text from documents (PDF, Word, PowerPoint, Excel). Returns formatted text optimized for LLM consumption without indexing.",
+                    description="Read document text without indexing. For repeated searches, use knowledge_index instead.",
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "file_path": {
                                 "type": "string",
-                                "description": f"Path to the document file. Supported formats: {', '.join(SUPPORTED_EXTENSIONS)}",
+                                "description": f"Path to document. Supported: {', '.join(SUPPORTED_EXTENSIONS)}",
                             },
                             "max_chars": {
                                 "type": "number",
                                 "default": 100000,
-                                "description": "Maximum characters (not tokens) to return. Large documents are truncated at this limit.",
+                                "description": "Max characters to return",
                             },
                             "include_metadata": {
                                 "type": "boolean",
                                 "default": True,
-                                "description": "Include document metadata in response",
+                                "description": "Include document metadata",
                             },
                         },
                         "required": ["file_path"],
@@ -231,13 +250,13 @@ class KnowledgeServer:
                 ),
                 Tool(
                     name="list_tables",
-                    description="List all tables in a document. Returns table index, location, headers, and row count for each table found.",
+                    description="List all tables in a document with index, headers, and row count.",
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "file_path": {
                                 "type": "string",
-                                "description": f"Path to the document file. Supported formats: {', '.join(SUPPORTED_TABLE_FORMATS)}",
+                                "description": f"Path to document. Supported: {', '.join(SUPPORTED_TABLE_FORMATS)}",
                             },
                         },
                         "required": ["file_path"],
@@ -245,26 +264,26 @@ class KnowledgeServer:
                 ),
                 Tool(
                     name="extract_table",
-                    description="Extract a specific table from a document as CSV. Use list_tables first to discover available tables.",
+                    description="Extract a table as CSV. Use list_tables first to find table indices.",
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "file_path": {
                                 "type": "string",
-                                "description": f"Path to the document file. Supported formats: {', '.join(SUPPORTED_TABLE_FORMATS)}",
+                                "description": f"Path to document. Supported: {', '.join(SUPPORTED_TABLE_FORMATS)}",
                             },
                             "table_index": {
                                 "type": "number",
-                                "description": "Index of the table to extract (0-based, from list_tables)",
+                                "description": "0-based table index from list_tables",
                             },
                             "max_rows": {
                                 "type": "number",
-                                "description": "Maximum number of data rows to extract (optional, extracts all if not specified)",
+                                "description": "Max data rows to extract (omit for all)",
                             },
                             "include_headers": {
                                 "type": "boolean",
                                 "default": True,
-                                "description": "Include header row in CSV output",
+                                "description": "Include header row",
                             },
                         },
                         "required": ["file_path", "table_index"],
