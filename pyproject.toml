@@ -33,11 +33,13 @@ dev = [
 ]
 
 [project.scripts]
-knowledge-index-mcp = "server:main"
+knowledge-index-mcp = "src.server:main"
+knowledge-index-install-skill = "src.install_skill:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
+artifacts = ["src/skills/**/*.md"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["src/tests"]
+testpaths = ["src/tests", "tests"]

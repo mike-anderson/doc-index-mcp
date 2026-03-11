@@ -372,48 +372,4 @@ def _expand_to_boundary(
     }
 
 
-# Tool schema for MCP registration
-SEARCH_TOOL_SCHEMA = {
-    "name": "knowledge_search",
-    "description": "Search indexed documents using semantic and text similarity with optional boundary expansion",
-    "inputSchema": {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "Semantic search query",
-            },
-            "sources": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Filter to specific source names (optional)",
-            },
-            "top_k": {
-                "type": "number",
-                "default": 5,
-                "description": "Number of results to return",
-            },
-            "include_context": {
-                "type": "boolean",
-                "default": True,
-                "description": "Include surrounding chunks as context",
-            },
-            "expand_to_boundary": {
-                "type": "string",
-                "enum": ["chapter", "section", "subsection", "page"],
-                "description": "Expand results to include full boundary content",
-            },
-            "max_return_tokens": {
-                "type": "number",
-                "default": 4096,
-                "description": "Maximum tokens to return across all results",
-            },
-            "include_siblings": {
-                "type": "boolean",
-                "default": False,
-                "description": "Include sibling boundaries when expanding",
-            },
-        },
-        "required": ["query"],
-    },
-}
+# Tool schema kept in server.py — this copy removed to avoid drift.

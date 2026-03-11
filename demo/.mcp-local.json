@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "knowledge-index": {
+      "command": "uv",
+      "args": ["--directory", "..", "run", "knowledge-index-mcp"],
+      "env": {
+        "MCP_WORKING_DIR": "${workspaceFolder}"
+      }
+    }
+  }
+}

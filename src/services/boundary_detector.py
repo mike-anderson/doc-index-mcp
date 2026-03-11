@@ -80,8 +80,10 @@ BOUNDARY_PATTERNS: list[BoundaryPattern] = [
     ),
 
     # Numbered sections (e.g., "1.2.3 Title")
+    # The bare "N Title" pattern requires a small chapter number (1-99) and a
+    # short, title-like remainder — no dot-leaders, pipes, or long sentences.
     BoundaryPattern(
-        pattern=re.compile(r'^(\d+)\s+(.+)$', re.MULTILINE),
+        pattern=re.compile(r'^(\d{1,2})\s+([A-Z][A-Za-z0-9,:\-\'\(\)\s]{2,70})$', re.MULTILINE),
         boundary_type=BoundaryType.CHAPTER,
         level=1,
         title_group=2,
@@ -140,6 +142,19 @@ BOUNDARY_PATTERNS: list[BoundaryPattern] = [
 ]
 
 
+# Lines matching these patterns are never boundaries (TOC entries, page footers, etc.)
+_NOISE_LINE_PATTERNS = [
+    re.compile(r'\.{3,}'),           # Dot-leaders (TOC entries)
+    re.compile(r'^\d+\s*\|\s'),      # Page-number pipes ("42 | Chapter 3")
+    re.compile(r'^\|\s'),            # Leading pipes ("| Economic Report")
+]
+
+
+def _is_noise_line(line: str) -> bool:
+    """Return True if the line looks like a TOC entry, footer, or other noise."""
+    return any(p.search(line) for p in _NOISE_LINE_PATTERNS)
+
+
 @dataclass
 class DetectedBoundary:
     """A boundary detected in text with its match information."""
@@ -187,6 +202,11 @@ def detect_boundaries(
             offset += len(line) + 1
             continue
 
+        # Skip lines that look like TOC entries, footers, etc.
+        if _is_noise_line(stripped):
+            offset += len(line) + 1
+            continue
+
         # Test against patterns in priority order
         sorted_patterns = sorted(active_patterns, key=lambda p: -p.priority)
 
@@ -214,8 +234,45 @@ def detect_boundaries(
 
         offset += len(line) + 1
 
+    # Validate: if a boundary type has implausibly many detections, drop it.
+    # Real documents rarely have more than ~50 chapters or ~200 sections.
+    detected = _prune_implausible(detected, len(content))
+
     # Build boundaries with hierarchy
     return _build_hierarchy(detected)
+
+
+# Maximum plausible boundary counts by type.
+# Real documents rarely exceed these; if they do, the pattern is matching noise.
+_MAX_BOUNDARIES = {
+    BoundaryType.CHAPTER: 100,
+    BoundaryType.SECTION: 500,
+    BoundaryType.SUBSECTION: 1000,
+}
+
+
+def _prune_implausible(
+    detected: list[DetectedBoundary],
+    content_length: int,
+) -> list[DetectedBoundary]:
+    """Remove boundary types that have implausibly many detections.
+
+    If a pattern fired far more times than any real document structure would
+    produce, it was matching noise (TOC lines, numbered paragraphs, etc.).
+    """
+    from collections import Counter
+    type_counts = Counter(d.boundary_type for d in detected)
+
+    noisy_types: set[BoundaryType] = set()
+    for btype, count in type_counts.items():
+        max_allowed = _MAX_BOUNDARIES.get(btype)
+        if max_allowed and count > max_allowed:
+            noisy_types.add(btype)
+
+    if not noisy_types:
+        return detected
+
+    return [d for d in detected if d.boundary_type not in noisy_types]
 
 
 def _build_hierarchy(detected: list[DetectedBoundary]) -> list[Boundary]:

@@ -41,6 +41,14 @@ env/
 .coverage
 htmlcov/
 
+# Test fixture PDFs (large, downloaded at test time)
+tests/fixtures/*.pdf
+
+# Demo artifacts
+demo/.venv/
+demo/.knowledge/
+demo/.claude/
+
 # Misc
 .DS_Store
 *.log
