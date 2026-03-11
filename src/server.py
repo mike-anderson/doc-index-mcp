@@ -347,7 +347,10 @@ class KnowledgeServer:
 
         # Chunk the document with boundary-aware chunking
         options = chunker.ChunkOptions()
-        chunks, boundary_index = chunker.chunk_document(doc.content, source, options)
+        chunks, boundary_index = chunker.chunk_document(
+            doc.content, source, options,
+            loader_boundaries=doc.boundaries or None,
+        )
         self.boundary_indices[source] = boundary_index
 
         # Generate embeddings

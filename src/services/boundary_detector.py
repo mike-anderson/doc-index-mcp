@@ -102,6 +102,33 @@ BOUNDARY_PATTERNS: list[BoundaryPattern] = [
         priority=72,
     ),
 
+    # Sheet markers (Excel)
+    BoundaryPattern(
+        pattern=re.compile(r'^\[Sheet:\s+(.+)\]$', re.MULTILINE),
+        boundary_type=BoundaryType.SHEET,
+        level=1,
+        title_group=1,
+        priority=92,
+    ),
+
+    # Row group markers (Excel)
+    BoundaryPattern(
+        pattern=re.compile(r'^\[Rows\s+(\d+-\d+)\]$', re.MULTILINE),
+        boundary_type=BoundaryType.ROW_GROUP,
+        level=2,
+        title_group=1,
+        priority=88,
+    ),
+
+    # Slide markers (PPTX)
+    BoundaryPattern(
+        pattern=re.compile(r'^\[Slide\s+(\d+):\s+(.+)\]$', re.MULTILINE),
+        boundary_type=BoundaryType.SLIDE,
+        level=1,
+        title_group=2,
+        priority=91,
+    ),
+
     # ALL CAPS headers (common in legal/academic docs)
     BoundaryPattern(
         pattern=re.compile(r'^([A-Z][A-Z\s]{3,}[A-Z])$', re.MULTILINE),
@@ -125,7 +152,10 @@ class DetectedBoundary:
     matched_text: str
 
 
-def detect_boundaries(content: str) -> list[Boundary]:
+def detect_boundaries(
+    content: str,
+    skip_types: Optional[set[BoundaryType]] = None,
+) -> list[Boundary]:
     """
     Detect logical boundaries in document content.
 
@@ -134,15 +164,22 @@ def detect_boundaries(content: str) -> list[Boundary]:
 
     Args:
         content: Document text content
+        skip_types: Boundary types to skip detection for (e.g., when the
+            loader already provides these natively and we don't want
+            unreliable duplicate detection from regex patterns)
 
     Returns:
         List of Boundary objects with hierarchy relationships
     """
     # First, find all potential boundaries
     detected: list[DetectedBoundary] = []
+    skip_types = skip_types or set()
 
     lines = content.split('\n')
     offset = 0
+
+    # Filter out patterns for types the loader already handles
+    active_patterns = [p for p in BOUNDARY_PATTERNS if p.boundary_type not in skip_types]
 
     for line_num, line in enumerate(lines):
         stripped = line.strip()
@@ -151,7 +188,7 @@ def detect_boundaries(content: str) -> list[Boundary]:
             continue
 
         # Test against patterns in priority order
-        sorted_patterns = sorted(BOUNDARY_PATTERNS, key=lambda p: -p.priority)
+        sorted_patterns = sorted(active_patterns, key=lambda p: -p.priority)
 
         for pattern in sorted_patterns:
             match = pattern.pattern.match(stripped)
@@ -329,5 +366,60 @@ def get_level_for_boundary_type(type_name: str) -> int:
         "section": 2,
         "subsection": 3,
         "page": 4,
+        "sheet": 1,
+        "slide": 1,
+        "row_group": 2,
     }
     return level_map.get(type_name, 3)
+
+
+def get_loader_boundary_types(loader_boundaries: list[Boundary]) -> set[BoundaryType]:
+    """Extract the set of boundary types provided by the loader.
+
+    These types should be skipped during regex detection to avoid
+    unreliable duplicate boundaries.
+    """
+    return {b.type for b in loader_boundaries}
+
+
+def merge_boundaries(
+    loader_boundaries: list[Boundary],
+    detected_boundaries: list[Boundary],
+) -> list[Boundary]:
+    """
+    Merge pre-detected loader boundaries with text-pattern-detected boundaries.
+
+    The detected_boundaries should already have loader-provided types filtered
+    out (via skip_types in detect_boundaries), so this just combines them and
+    parents text-detected boundaries (e.g., headings) under the nearest
+    preceding loader boundary.
+
+    Args:
+        loader_boundaries: Boundaries from native document parsing
+        detected_boundaries: Boundaries from regex pattern matching
+            (already filtered to exclude loader-provided types)
+
+    Returns:
+        Merged boundary list, sorted by offset
+    """
+    if not loader_boundaries:
+        return detected_boundaries
+    if not detected_boundaries:
+        return loader_boundaries
+
+    merged = list(loader_boundaries)
+
+    for detected in detected_boundaries:
+        # Parent text-detected boundaries under nearest preceding loader boundary
+        if detected.parent_id is None:
+            nearest_parent = None
+            for lb in sorted(loader_boundaries, key=lambda b: b.start_offset):
+                if lb.start_offset <= detected.start_offset and lb.level < detected.level:
+                    nearest_parent = lb
+            if nearest_parent:
+                detected.parent_id = nearest_parent.id
+
+        merged.append(detected)
+
+    merged.sort(key=lambda b: b.start_offset)
+    return merged

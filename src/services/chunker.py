@@ -20,6 +20,9 @@ class BoundaryType(Enum):
     SECTION = "section"       # ## in MD, 1.1
     SUBSECTION = "subsection" # ###, 1.1.1
     PAGE = "page"             # [Page N]
+    SHEET = "sheet"           # Excel sheet
+    SLIDE = "slide"           # PPTX slide
+    ROW_GROUP = "row_group"   # Excel row range within a sheet
 
 
 @dataclass
@@ -68,6 +71,8 @@ class ChunkMetadata:
     parent_boundary: Optional[str] = None
     boundary_title: Optional[str] = None
     token_count: Optional[int] = None
+    sheet: Optional[str] = None
+    slide: Optional[int] = None
 
     def to_dict(self) -> dict:
         result = {
@@ -79,6 +84,10 @@ class ChunkMetadata:
             result["page"] = self.page
         if self.section is not None:
             result["section"] = self.section
+        if self.sheet is not None:
+            result["sheet"] = self.sheet
+        if self.slide is not None:
+            result["slide"] = self.slide
         if self.boundary_type is not None:
             result["boundary_type"] = self.boundary_type
         if self.boundary_id is not None:
@@ -107,6 +116,8 @@ class ChunkMetadata:
             parent_boundary=data.get("parent_boundary"),
             boundary_title=data.get("boundary_title"),
             token_count=data.get("token_count"),
+            sheet=data.get("sheet"),
+            slide=data.get("slide"),
         )
 
 
@@ -471,13 +482,15 @@ def _create_chunk(
 def chunk_document(
     content: str,
     source_name: str,
-    options: Optional[ChunkOptions] = None
+    options: Optional[ChunkOptions] = None,
+    loader_boundaries: Optional[list[Boundary]] = None,
 ) -> tuple[list[Chunk], BoundaryIndex]:
     """
     Boundary-aware chunking algorithm.
 
     Two-phase strategy:
     1. Detect logical boundaries (chapters, sections, headers)
+       - Merges with pre-detected boundaries from native document loaders
     2. Chunk each region optimally for embedding model
 
     Optimized for:
@@ -489,20 +502,36 @@ def chunk_document(
         content: Document text content
         source_name: Name/identifier for the source document
         options: Chunking options
+        loader_boundaries: Pre-detected boundaries from native document loaders
 
     Returns:
         Tuple of (chunks, boundary_index)
     """
     # Import here to avoid circular imports
-    from .boundary_detector import detect_boundaries, split_content_by_boundaries
+    from .boundary_detector import (
+        detect_boundaries,
+        get_loader_boundary_types,
+        merge_boundaries,
+        split_content_by_boundaries,
+    )
 
     if options is None:
         options = ChunkOptions()  # Uses v2 defaults
 
     options.validate()
 
-    # Phase 1: Detect boundaries
-    boundaries = detect_boundaries(content)
+    # Phase 1: Detect text-pattern boundaries
+    # Skip regex detection for types the loader already provides natively —
+    # the loader's boundaries are authoritative and we don't want unreliable
+    # duplicate detection from pattern matching.
+    skip_types = get_loader_boundary_types(loader_boundaries) if loader_boundaries else set()
+    detected_boundaries = detect_boundaries(content, skip_types=skip_types)
+
+    # Merge with loader-provided boundaries (native page/sheet/slide detection)
+    if loader_boundaries:
+        boundaries = merge_boundaries(loader_boundaries, detected_boundaries)
+    else:
+        boundaries = detected_boundaries
 
     # Build boundary index
     boundary_index = BoundaryIndex()
@@ -523,10 +552,40 @@ def chunk_document(
             options=options,
         )
 
-        # Map chunks to their boundary
+        # Map chunks to their boundary and populate structured metadata
         for chunk in region_chunks:
             if boundary:
                 boundary_index.map_chunk_to_boundary(chunk.id, boundary.id)
+
+                # Populate page number from page boundaries
+                if boundary.type == BoundaryType.PAGE:
+                    try:
+                        chunk.metadata.page = int(boundary.title)
+                    except (ValueError, TypeError):
+                        pass
+                # Populate sheet name from sheet boundaries
+                elif boundary.type == BoundaryType.SHEET:
+                    chunk.metadata.sheet = boundary.title
+                # Populate slide number from slide boundaries
+                elif boundary.type == BoundaryType.SLIDE:
+                    try:
+                        # Slide ID is "slide:N"
+                        chunk.metadata.slide = int(boundary.id.split(":")[1])
+                    except (ValueError, IndexError):
+                        pass
+                # For sub-boundaries, inherit from ancestors
+                elif boundary.type == BoundaryType.ROW_GROUP:
+                    # Row groups are children of sheets
+                    if boundary.parent_id:
+                        parent = boundary_index.get_boundary(boundary.parent_id)
+                        if parent and parent.type == BoundaryType.SHEET:
+                            chunk.metadata.sheet = parent.title
+
+                # For non-page boundaries, find the page they're on by offset
+                if boundary.type != BoundaryType.PAGE and chunk.metadata.page is None:
+                    chunk.metadata.page = _find_page_at_offset(
+                        boundary.start_offset, boundary_index
+                    )
 
         all_chunks.extend(region_chunks)
 
@@ -535,3 +594,26 @@ def chunk_document(
         chunk.metadata.total_chunks = len(all_chunks)
 
     return all_chunks, boundary_index
+
+
+def _find_page_at_offset(
+    offset: int,
+    boundary_index: BoundaryIndex,
+) -> Optional[int]:
+    """Find the page number for content at a given offset.
+
+    Searches all PAGE boundaries for the nearest one that precedes the offset.
+    This works regardless of hierarchy since pages are layout boundaries
+    orthogonal to semantic boundaries (headings, sections).
+    """
+    best_page = None
+    best_offset = -1
+    for b in boundary_index.boundaries:
+        if b.type == BoundaryType.PAGE and b.start_offset <= offset:
+            if b.start_offset > best_offset:
+                best_offset = b.start_offset
+                try:
+                    best_page = int(b.title)
+                except (ValueError, TypeError):
+                    pass
+    return best_page

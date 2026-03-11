@@ -14,6 +14,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Optional
 
+from .chunker import Boundary, BoundaryType
+
 
 SUPPORTED_EXTENSIONS = {
     '.txt': 'text',
@@ -34,6 +36,7 @@ class LoadedDocument:
     file_type: str
     metadata: dict
     structure: Optional[dict] = field(default=None)
+    boundaries: list[Boundary] = field(default_factory=list)  # Pre-detected by native loaders
 
 
 async def load_document(file_path: str) -> LoadedDocument:
@@ -90,11 +93,13 @@ async def _load_text_file(file_path: str, ext: str) -> LoadedDocument:
 
 
 async def _load_pdf_file(file_path: str) -> LoadedDocument:
-    """Load a PDF file using pdfplumber."""
+    """Load a PDF file using pdfplumber with native page boundary detection."""
     import pdfplumber
 
     pages_content = []
+    boundaries = []
     total_pages = 0
+    offset = 0
 
     with pdfplumber.open(file_path) as pdf:
         total_pages = len(pdf.pages)
@@ -102,8 +107,19 @@ async def _load_pdf_file(file_path: str) -> LoadedDocument:
         for i, page in enumerate(pdf.pages, start=1):
             text = page.extract_text() or ""
             if text.strip():
-                # Add page marker for boundary detection
-                pages_content.append(f"[Page {i}]\n{text}")
+                page_text = f"[Page {i}]\n{text}"
+
+                # Create boundary from native page knowledge
+                boundaries.append(Boundary(
+                    type=BoundaryType.PAGE,
+                    level=4,
+                    id=f"page:{i}",
+                    title=str(i),
+                    start_offset=offset,
+                ))
+
+                pages_content.append(page_text)
+                offset += len(page_text) + 2  # +2 for \n\n separator
 
     content = "\n\n".join(pages_content)
 
@@ -117,7 +133,8 @@ async def _load_pdf_file(file_path: str) -> LoadedDocument:
         },
         structure={
             "pages": total_pages,
-        }
+        },
+        boundaries=boundaries,
     )
 
 
@@ -129,17 +146,59 @@ async def _load_docx_file(file_path: str) -> LoadedDocument:
     - Paragraphs as text blocks
     - Tables converted to markdown tables
     - Headings marked with # notation for boundary detection
+    - Page breaks detected from native <w:br w:type="page"/> elements
     """
     from docx import Document
+    from lxml import etree
 
     doc = Document(file_path)
     content_parts = []
+    boundaries = []
     heading_count = 0
     table_count = 0
+    page_number = 1
+    offset = 0
+
+    # XML namespace for detecting page breaks
+    w_ns = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+
+    def _has_page_break(element) -> bool:
+        """Check if a paragraph element contains a page break."""
+        # Check for <w:br w:type="page"/> in runs
+        for br in element.iter(f'{w_ns}br'):
+            if br.get(f'{w_ns}type') == 'page':
+                return True
+        # Check for page break before in paragraph properties
+        pPr = element.find(f'{w_ns}pPr')
+        if pPr is not None:
+            pageBreakBefore = pPr.find(f'{w_ns}pageBreakBefore')
+            if pageBreakBefore is not None:
+                val = pageBreakBefore.get(f'{w_ns}val')
+                if val is None or val.lower() not in ('false', '0', 'off'):
+                    return True
+        # Check for section breaks (which also start new pages)
+        if pPr is not None:
+            sectPr = pPr.find(f'{w_ns}sectPr')
+            if sectPr is not None:
+                return True
+        return False
 
     for element in doc.element.body:
-        # Check if it's a paragraph or table
         if element.tag.endswith('p'):
+            # Check for page break before processing content
+            if _has_page_break(element):
+                page_number += 1
+                page_marker = f"[Page {page_number}]"
+                boundaries.append(Boundary(
+                    type=BoundaryType.PAGE,
+                    level=4,
+                    id=f"page:{page_number}",
+                    title=str(page_number),
+                    start_offset=offset,
+                ))
+                content_parts.append(page_marker)
+                offset += len(page_marker) + 2
+
             # Find matching paragraph
             for para in doc.paragraphs:
                 if para._element is element:
@@ -150,26 +209,28 @@ async def _load_docx_file(file_path: str) -> LoadedDocument:
                     # Detect heading styles
                     if para.style and para.style.name and para.style.name.startswith('Heading'):
                         heading_count += 1
-                        # Extract heading level
                         level_str = para.style.name.replace('Heading', '').strip()
                         try:
                             level = int(level_str) if level_str.isdigit() else 1
                         except ValueError:
                             level = 1
-                        level = min(level, 6)  # Max 6 levels in markdown
-                        content_parts.append(f"{'#' * level} {text}")
+                        level = min(level, 6)
+                        part = f"{'#' * level} {text}"
                     else:
-                        content_parts.append(text)
+                        part = text
+
+                    content_parts.append(part)
+                    offset += len(part) + 2
                     break
 
         elif element.tag.endswith('tbl'):
-            # Find matching table
             for table in doc.tables:
                 if table._tbl is element:
                     table_count += 1
                     md_table = _docx_table_to_markdown(table)
                     if md_table:
                         content_parts.append(md_table)
+                        offset += len(md_table) + 2
                     break
 
     content = "\n\n".join(content_parts)
@@ -180,11 +241,14 @@ async def _load_docx_file(file_path: str) -> LoadedDocument:
         metadata={
             "file_path": file_path,
             "file_size": os.path.getsize(file_path),
+            "total_pages": page_number,
         },
         structure={
             "headings": heading_count,
             "tables": table_count,
-        }
+            "pages": page_number,
+        },
+        boundaries=boundaries,
     )
 
 
@@ -215,8 +279,10 @@ async def _load_pptx_file(file_path: str) -> LoadedDocument:
 
     prs = Presentation(file_path)
     content_parts = []
+    boundaries = []
     slide_count = len(prs.slides)
     has_notes = False
+    offset = 0
 
     for i, slide in enumerate(prs.slides, start=1):
         slide_parts = []
@@ -224,6 +290,15 @@ async def _load_pptx_file(file_path: str) -> LoadedDocument:
         # Get slide title
         title = _get_slide_title(slide)
         slide_parts.append(f"[Slide {i}: {title}]")
+
+        # Create boundary from native slide knowledge
+        boundaries.append(Boundary(
+            type=BoundaryType.SLIDE,
+            level=1,
+            id=f"slide:{i}",
+            title=title,
+            start_offset=offset,
+        ))
 
         # Extract text from shapes
         for shape in slide.shapes:
@@ -244,7 +319,9 @@ async def _load_pptx_file(file_path: str) -> LoadedDocument:
                 has_notes = True
                 slide_parts.append(f"\n[Notes:]\n{notes_frame.text.strip()}")
 
-        content_parts.append("\n".join(slide_parts))
+        slide_text = "\n".join(slide_parts)
+        content_parts.append(slide_text)
+        offset += len(slide_text) + 2  # +2 for \n\n separator
 
     content = "\n\n".join(content_parts)
 
@@ -259,7 +336,8 @@ async def _load_pptx_file(file_path: str) -> LoadedDocument:
         structure={
             "slides": slide_count,
             "has_notes": has_notes,
-        }
+        },
+        boundaries=boundaries,
     )
 
 
@@ -307,39 +385,93 @@ def _pptx_table_to_markdown(table) -> str:
     return _rows_to_markdown_table(rows)
 
 
-async def _load_xlsx_file(file_path: str) -> LoadedDocument:
+async def _load_xlsx_file(
+    file_path: str,
+    rows_per_group: int = 50,
+) -> LoadedDocument:
     """
-    Load an Excel spreadsheet using openpyxl.
+    Load an Excel spreadsheet using openpyxl with native sheet and row boundaries.
 
     Extracts:
-    - Each sheet as [Sheet: Name] boundary
-    - Data converted to markdown tables
-    - Large sheets chunked by rows with continuation markers
+    - Each sheet as a SHEET boundary
+    - Row groups as ROW_GROUP boundaries within each sheet
+    - Data converted to markdown tables per row group
     """
     from openpyxl import load_workbook
 
     # data_only=True gets calculated values instead of formulas
     wb = load_workbook(file_path, data_only=True)
     content_parts = []
+    boundaries = []
     total_rows = 0
+    offset = 0
+    sheet_names = list(wb.sheetnames)
 
-    for sheet_name in wb.sheetnames:
+    for sheet_idx, sheet_name in enumerate(sheet_names, start=1):
         sheet = wb[sheet_name]
-        content_parts.append(f"[Sheet: {sheet_name}]")
 
-        # Convert sheet to rows
-        rows = []
+        # Sheet boundary
+        sheet_marker = f"[Sheet: {sheet_name}]"
+        boundaries.append(Boundary(
+            type=BoundaryType.SHEET,
+            level=1,
+            id=f"sheet:{sheet_idx}",
+            title=sheet_name,
+            start_offset=offset,
+        ))
+        content_parts.append(sheet_marker)
+        offset += len(sheet_marker) + 2
+
+        # Collect all non-empty rows
+        all_rows = []
         for row in sheet.iter_rows(values_only=True):
-            # Filter out completely empty rows
             if any(cell is not None for cell in row):
-                rows.append(row)
+                all_rows.append(row)
                 total_rows += 1
 
-        if rows:
-            md_table = _rows_to_markdown_table(rows)
+        if not all_rows:
+            empty_text = "*Empty sheet*"
+            content_parts.append(empty_text)
+            offset += len(empty_text) + 2
+            continue
+
+        # Extract header row
+        header_row = all_rows[0]
+        data_rows = all_rows[1:]
+
+        if not data_rows:
+            # Only a header row
+            md_table = _rows_to_markdown_table(all_rows, max_rows=500)
             content_parts.append(md_table)
-        else:
-            content_parts.append("*Empty sheet*")
+            offset += len(md_table) + 2
+            continue
+
+        # Split data rows into groups for row-level boundaries
+        for group_start in range(0, len(data_rows), rows_per_group):
+            group_end = min(group_start + rows_per_group, len(data_rows))
+            group_rows = data_rows[group_start:group_end]
+
+            # Row numbers are 1-indexed (excluding header)
+            row_start_num = group_start + 2  # +2: 1-indexed, skip header
+            row_end_num = group_end + 1
+
+            row_marker = f"[Rows {row_start_num}-{row_end_num}]"
+            boundaries.append(Boundary(
+                type=BoundaryType.ROW_GROUP,
+                level=2,
+                id=f"sheet:{sheet_idx}:rows:{row_start_num}-{row_end_num}",
+                title=f"{sheet_name} rows {row_start_num}-{row_end_num}",
+                start_offset=offset,
+                parent_id=f"sheet:{sheet_idx}",
+            ))
+
+            # Build markdown table with header repeated for each group
+            table_rows = [header_row] + list(group_rows)
+            md_table = _rows_to_markdown_table(table_rows, max_rows=rows_per_group + 1)
+
+            group_text = f"{row_marker}\n{md_table}"
+            content_parts.append(group_text)
+            offset += len(group_text) + 2
 
     wb.close()
     content = "\n\n".join(content_parts)
@@ -352,9 +484,10 @@ async def _load_xlsx_file(file_path: str) -> LoadedDocument:
             "file_size": os.path.getsize(file_path),
         },
         structure={
-            "sheets": wb.sheetnames,
+            "sheets": sheet_names,
             "total_rows": total_rows,
-        }
+        },
+        boundaries=boundaries,
     )
 
 
