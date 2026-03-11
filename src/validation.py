@@ -338,6 +338,102 @@ class ExtractTableInput(BaseModel):
         return v
 
 
+class TocInput(BaseModel):
+    """Validation for knowledge_toc tool."""
+
+    source_name: str
+    max_depth: int = 3
+
+    @field_validator('source_name')
+    @classmethod
+    def validate_source_name(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError(
+                "source_name is required. "
+                "Use knowledge_list to see available indexed sources."
+            )
+        return v.strip()
+
+    @field_validator('max_depth')
+    @classmethod
+    def validate_max_depth(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(
+                f"max_depth must be at least 1, got {v}. "
+                "1=chapters only, 2=+sections, 3=+subsections."
+            )
+        if v > 4:
+            raise ValueError(
+                f"max_depth cannot exceed 4, got {v}. "
+                "Levels: 1=chapter, 2=section, 3=subsection, 4=all."
+            )
+        return v
+
+
+class GetContentInput(BaseModel):
+    """Validation for knowledge_get_content tool."""
+
+    source_name: str
+    boundary_id: Optional[str] = None
+    chapter: Optional[str] = None
+    section: Optional[str] = None
+    pages: Optional[str] = None
+    max_return_tokens: int = 8192
+    include_children: bool = True
+
+    @field_validator('source_name')
+    @classmethod
+    def validate_source_name(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError(
+                "source_name is required. "
+                "Use knowledge_list to see available indexed sources."
+            )
+        return v.strip()
+
+    @field_validator('max_return_tokens')
+    @classmethod
+    def validate_max_return_tokens(cls, v: int) -> int:
+        if v < 100:
+            raise ValueError(
+                f"max_return_tokens must be at least 100, got {v}."
+            )
+        if v > 100000:
+            raise ValueError(
+                f"max_return_tokens cannot exceed 100,000, got {v}."
+            )
+        return v
+
+    @field_validator('pages')
+    @classmethod
+    def validate_pages(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v = v.strip()
+        if not re.match(r'^\d+(-\d+)?$', v):
+            raise ValueError(
+                f"Invalid pages format '{v}'. "
+                "Use a single page number (e.g., '5') or a range (e.g., '5-10')."
+            )
+        return v
+
+    @model_validator(mode='after')
+    def validate_at_least_one_locator(self):
+        locators = [self.boundary_id, self.chapter, self.section, self.pages]
+        provided = [l for l in locators if l is not None]
+        if len(provided) == 0:
+            raise ValueError(
+                "At least one locator is required: boundary_id, chapter, section, or pages. "
+                "Use knowledge_toc to see available boundaries."
+            )
+        if len(provided) > 1:
+            raise ValueError(
+                "Only one locator can be specified at a time. "
+                "Provide exactly one of: boundary_id, chapter, section, or pages."
+            )
+        return self
+
+
 def validate_input(model_class: type[BaseModel], arguments: dict) -> dict:
     """
     Validate input arguments using a Pydantic model.

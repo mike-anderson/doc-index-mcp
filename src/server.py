@@ -6,6 +6,8 @@ Provides semantic search over indexed documents with boundary-aware chunking.
 Tools:
 - knowledge_index: Index a document (PDF, TXT, MD, DOCX, PPTX, XLSX)
 - knowledge_search: Semantic and text search with boundary expansion
+- knowledge_toc: Get document table of contents (chapters, sections, subsections)
+- knowledge_get_content: Retrieve content by boundary ID, chapter/section title, or page range
 - knowledge_list: List indexed sources
 - knowledge_chunk: Retrieve specific chunks
 - read_document: Read documents without indexing (PDF, Word, PowerPoint, Excel)
@@ -31,6 +33,8 @@ try:
     from .services import table_extractor
     from .services.embedder import Embedder
     from .tools import search_tool
+    from .tools import toc_tool
+    from .tools import content_tool
     from .validation import (
         validate_input,
         ValidationError,
@@ -40,6 +44,8 @@ try:
         ReadDocumentInput,
         ListTablesInput,
         ExtractTableInput,
+        TocInput,
+        GetContentInput,
     )
 except ImportError:
     # Absolute imports for when running with src/ on sys.path
@@ -49,6 +55,8 @@ except ImportError:
     from services import table_extractor
     from services.embedder import Embedder
     from tools import search_tool
+    from tools import toc_tool
+    from tools import content_tool
     from validation import (
         validate_input,
         ValidationError,
@@ -58,6 +66,8 @@ except ImportError:
         ReadDocumentInput,
         ListTablesInput,
         ExtractTableInput,
+        TocInput,
+        GetContentInput,
     )
 
 # Supported file extensions
@@ -109,6 +119,14 @@ SEARCH_TOOL_SCHEMA = {
         "required": ["query"],
     },
 }
+
+
+def _count_toc_entries(entries) -> int:
+    """Count total entries in a TocEntry tree."""
+    count = len(entries)
+    for entry in entries:
+        count += _count_toc_entries(entry.children)
+    return count
 
 
 class KnowledgeServer:
@@ -289,6 +307,65 @@ class KnowledgeServer:
                         "required": ["file_path", "table_index"],
                     },
                 ),
+                Tool(
+                    name="knowledge_toc",
+                    description="Get the table of contents (chapters, sections, subsections) for an indexed document. Use this to understand document structure before retrieving specific content with knowledge_get_content.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "source_name": {
+                                "type": "string",
+                                "description": "Name of the indexed source (from knowledge_list)",
+                            },
+                            "max_depth": {
+                                "type": "number",
+                                "default": 3,
+                                "description": "Max depth: 1=chapters, 2=+sections, 3=+subsections",
+                            },
+                        },
+                        "required": ["source_name"],
+                    },
+                ),
+                Tool(
+                    name="knowledge_get_content",
+                    description="Retrieve document content by structural location. Use knowledge_toc first to find boundary IDs, chapter/section titles, or page numbers. Provide exactly one locator: boundary_id, chapter, section, or pages.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "source_name": {
+                                "type": "string",
+                                "description": "Name of the indexed source (from knowledge_list)",
+                            },
+                            "boundary_id": {
+                                "type": "string",
+                                "description": "Boundary ID from knowledge_toc (e.g., 'chapter:3', 'section:7')",
+                            },
+                            "chapter": {
+                                "type": "string",
+                                "description": "Chapter number or title to find (fuzzy matched)",
+                            },
+                            "section": {
+                                "type": "string",
+                                "description": "Section number or title to find (fuzzy matched)",
+                            },
+                            "pages": {
+                                "type": "string",
+                                "description": "Page number or range (e.g., '5' or '5-10')",
+                            },
+                            "max_return_tokens": {
+                                "type": "number",
+                                "default": 8192,
+                                "description": "Token budget for returned content",
+                            },
+                            "include_children": {
+                                "type": "boolean",
+                                "default": True,
+                                "description": "Include child boundaries (e.g., sections within a chapter)",
+                            },
+                        },
+                        "required": ["source_name"],
+                    },
+                ),
             ]
 
         @self.server.call_tool()
@@ -331,6 +408,15 @@ class KnowledgeServer:
                         max_rows=validated.get("max_rows"),
                         include_headers=validated.get("include_headers", True),
                     )
+                elif name == "knowledge_toc":
+                    validated = validate_input(TocInput, arguments)
+                    result = await self._get_toc(
+                        source_name=validated["source_name"],
+                        max_depth=validated.get("max_depth", 3),
+                    )
+                elif name == "knowledge_get_content":
+                    validated = validate_input(GetContentInput, arguments)
+                    result = await self._get_content(validated)
                 else:
                     result = {"error": f"Unknown tool: {name}"}
 
@@ -563,6 +649,98 @@ class KnowledgeServer:
             "row_count": table.row_count,
             "col_count": table.col_count,
             "csv": csv_content,
+        }
+
+    async def _get_toc(self, source_name: str, max_depth: int = 3) -> dict:
+        """Get table of contents for an indexed document."""
+        await self._ensure_stores_loaded()
+
+        if source_name not in self.boundary_indices:
+            return {
+                "error": f"Source '{source_name}' not found or not indexed.",
+                "suggestion": "Use knowledge_list to see available sources, or knowledge_index to index a document first.",
+            }
+
+        boundary_index = self.boundary_indices[source_name]
+        entries = toc_tool.build_toc(boundary_index, max_depth=max_depth)
+
+        return {
+            "source_name": source_name,
+            "toc": toc_tool.toc_to_dict(entries),
+            "total_entries": _count_toc_entries(entries),
+        }
+
+    async def _get_content(self, arguments: dict) -> dict:
+        """Retrieve content by structural location."""
+        await self._ensure_stores_loaded()
+
+        source_name = arguments["source_name"]
+
+        if source_name not in self.stores:
+            return {
+                "error": f"Source '{source_name}' not found or not indexed.",
+                "suggestion": "Use knowledge_list to see available sources, or knowledge_index to index a document first.",
+            }
+
+        store = self.stores[source_name]
+        boundary_index = self.boundary_indices.get(source_name, chunker.BoundaryIndex())
+        max_tokens = arguments.get("max_return_tokens", 8192)
+        include_children = arguments.get("include_children", True)
+
+        if "boundary_id" in arguments:
+            response = content_tool.get_content_by_boundary(
+                store, boundary_index,
+                boundary_id=arguments["boundary_id"],
+                include_children=include_children,
+                max_tokens=max_tokens,
+            )
+        elif "chapter" in arguments:
+            response = content_tool.get_content_by_title(
+                store, boundary_index,
+                title_query=arguments["chapter"],
+                boundary_type="chapter",
+                include_children=include_children,
+                max_tokens=max_tokens,
+            )
+        elif "section" in arguments:
+            response = content_tool.get_content_by_title(
+                store, boundary_index,
+                title_query=arguments["section"],
+                include_children=include_children,
+                max_tokens=max_tokens,
+            )
+        elif "pages" in arguments:
+            pages_str = arguments["pages"]
+            if "-" in pages_str:
+                start_page, end_page = pages_str.split("-", 1)
+                start_page, end_page = int(start_page), int(end_page)
+            else:
+                start_page = end_page = int(pages_str)
+            response = content_tool.get_content_by_page_range(
+                store, boundary_index,
+                start_page=start_page,
+                end_page=end_page,
+                max_tokens=max_tokens,
+            )
+        else:
+            return {
+                "error": "No locator provided.",
+                "suggestion": "Provide one of: boundary_id, chapter, section, or pages.",
+            }
+
+        if not response.content:
+            return {
+                "error": "No content found for the specified location.",
+                "suggestion": "Use knowledge_toc to see available boundaries and their IDs.",
+            }
+
+        return {
+            "source_name": source_name,
+            "content": response.content,
+            "boundary_info": response.boundary_info,
+            "total_tokens": response.total_tokens,
+            "chunk_count": response.chunk_count,
+            "truncated": response.truncated,
         }
 
     async def _save_source(self, source_name: str, boundary_index: Any):
