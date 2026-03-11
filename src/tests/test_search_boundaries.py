@@ -91,6 +91,7 @@ def mock_store(indexed_document):
     chunks, boundary_index = indexed_document
 
     store = MagicMock(spec=VectorStore)
+    store.chunks = list(chunks)
 
     # Mock get_chunk_by_id
     chunk_map = {c.id: c for c in chunks}

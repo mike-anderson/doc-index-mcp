@@ -5,7 +5,7 @@ Provides semantic search over indexed documents with boundary-aware chunking.
 
 Tools:
 - knowledge_index: Index a document (PDF, TXT, MD, DOCX, PPTX, XLSX)
-- knowledge_search: Semantic search with boundary expansion
+- knowledge_search: Semantic and text search with boundary expansion
 - knowledge_list: List indexed sources
 - knowledge_chunk: Retrieve specific chunks
 - read_document: Read documents without indexing (PDF, Word, PowerPoint, Excel)
@@ -48,7 +48,7 @@ SUPPORTED_TABLE_FORMATS = [".pdf", ".docx", ".xlsx", ".xls"]
 # Search tool schema
 SEARCH_TOOL_SCHEMA = {
     "name": "knowledge_search",
-    "description": "Search indexed documents using semantic similarity with optional boundary expansion",
+    "description": "Search indexed documents using semantic and text similarity with optional boundary expansion",
     "inputSchema": {
         "type": "object",
         "properties": {
@@ -414,6 +414,8 @@ class KnowledgeServer:
                     "context": r.context,
                     "expanded_content": r.expanded_content,
                     "boundary_info": r.boundary_info,
+                    "text_score": round(r.text_score, 4) if r.text_score else None,
+                    "match_type": r.match_type,
                 }
                 for r in response.results
             ],
