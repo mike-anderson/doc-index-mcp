@@ -1,7 +1,8 @@
 """
 Tests for boundary detection.
 
-Tests pattern matching, hierarchy building, and boundary assignment.
+Tests pattern matching, hierarchy building, boundary assignment,
+and false-positive rejection (TOC lines, noise, implausible counts).
 """
 
 import pytest
@@ -11,6 +12,9 @@ from ..services.boundary_detector import (
     get_boundary_at_offset,
     assign_boundary_to_position,
     get_level_for_boundary_type,
+    _is_noise_line,
+    _prune_implausible,
+    DetectedBoundary,
 )
 from ..services.chunker import BoundaryType
 
@@ -314,3 +318,163 @@ class TestLevelMapping:
     def test_level_for_unknown(self):
         # Unknown types default to subsection level
         assert get_level_for_boundary_type("unknown") == 3
+
+
+class TestNoiseLineFiltering:
+    """Test that TOC entries, footers, and other noise are rejected."""
+
+    def test_dot_leader_is_noise(self):
+        """Lines with dot-leaders (TOC entries) should be noise."""
+        assert _is_noise_line("Chapter 1 ..................... 21")
+        assert _is_noise_line("The Benefits of Full Employment ......... 21")
+
+    def test_pipe_prefix_is_noise(self):
+        """Lines starting with pipes (page footers) should be noise."""
+        assert _is_noise_line("| Economic Report of the President")
+        assert _is_noise_line("| Annual Report of the Council")
+
+    def test_number_pipe_is_noise(self):
+        """Lines like '42 | Chapter 3' should be noise."""
+        assert _is_noise_line("42 | Chapter 3")
+        assert _is_noise_line("302 | References")
+
+    def test_normal_line_is_not_noise(self):
+        """Normal text and headers should not be noise."""
+        assert not _is_noise_line("1 Introduction")
+        assert not _is_noise_line("Chapter 4: Results")
+        assert not _is_noise_line("# Section Title")
+        assert not _is_noise_line("The economy grew by 3 percent.")
+
+
+class TestNumberedChapterFalsePositives:
+    """Test that the numbered chapter pattern rejects common false positives."""
+
+    def test_rejects_large_numbers(self):
+        """Numbers >= 100 should not match as chapter numbers."""
+        content = "302 References\n\nSome text.\n\n2024 Economic Report\n\nMore text."
+        boundaries = detect_boundaries(content)
+        chapter_boundaries = [b for b in boundaries if b.type == BoundaryType.CHAPTER]
+        # Neither "302" nor "2024" should be detected as chapters
+        for b in chapter_boundaries:
+            assert b.title not in ("References", "Economic Report")
+
+    def test_rejects_toc_lines(self):
+        """TOC lines with dot-leaders should not become boundaries."""
+        content = """Table of Contents
+
+1 Introduction ..................... 1
+2 Methods .......................... 15
+3 Results .......................... 42
+
+1 Introduction
+
+Actual chapter content here.
+"""
+        boundaries = detect_boundaries(content)
+        chapter_boundaries = [b for b in boundaries if b.type == BoundaryType.CHAPTER]
+        # Only the actual "1 Introduction" line (without dots) should match
+        assert len(chapter_boundaries) == 1
+        assert chapter_boundaries[0].title == "Introduction"
+
+    def test_rejects_sentence_starting_with_number(self):
+        """Body text lines that start with a number should not match."""
+        content = "11 The composition of the workforce is known to have important implications for the broader economy.\n\nMore text."
+        boundaries = detect_boundaries(content)
+        chapter_boundaries = [b for b in boundaries if b.type == BoundaryType.CHAPTER]
+        assert len(chapter_boundaries) == 0
+
+    def test_accepts_legitimate_numbered_chapters(self):
+        """Real numbered chapter titles should still be detected."""
+        content = """1 Introduction
+
+Content of intro.
+
+2 Background
+
+Content of background.
+
+3 Methods and Data Collection
+
+Content of methods.
+"""
+        boundaries = detect_boundaries(content)
+        chapter_boundaries = [b for b in boundaries if b.type == BoundaryType.CHAPTER]
+        assert len(chapter_boundaries) == 3
+        assert chapter_boundaries[0].title == "Introduction"
+        assert chapter_boundaries[1].title == "Background"
+        assert chapter_boundaries[2].title == "Methods and Data Collection"
+
+    def test_accepts_long_chapter_titles(self):
+        """Chapter titles up to ~70 chars should be accepted."""
+        content = "7 An Economic Framework for Understanding Artificial Intelligence\n\nContent."
+        boundaries = detect_boundaries(content)
+        chapter_boundaries = [b for b in boundaries if b.type == BoundaryType.CHAPTER]
+        assert len(chapter_boundaries) == 1
+
+
+class TestImplausiblePruning:
+    """Test statistical pruning of implausible boundary counts."""
+
+    def test_prune_excessive_chapters(self):
+        """If > 100 chapters are detected, the type should be pruned entirely."""
+        detected = [
+            DetectedBoundary(
+                boundary_type=BoundaryType.CHAPTER,
+                level=1,
+                title=f"Chapter {i}",
+                start_offset=i * 100,
+                end_offset=i * 100 + 50,
+                line_number=i,
+                matched_text=f"{i} Chapter {i}",
+            )
+            for i in range(150)
+        ]
+        pruned = _prune_implausible(detected, content_length=100000)
+        assert len(pruned) == 0
+
+    def test_keep_reasonable_chapters(self):
+        """Reasonable chapter counts should be kept."""
+        detected = [
+            DetectedBoundary(
+                boundary_type=BoundaryType.CHAPTER,
+                level=1,
+                title=f"Chapter {i}",
+                start_offset=i * 100,
+                end_offset=i * 100 + 50,
+                line_number=i,
+                matched_text=f"{i} Chapter {i}",
+            )
+            for i in range(20)
+        ]
+        pruned = _prune_implausible(detected, content_length=100000)
+        assert len(pruned) == 20
+
+    def test_prune_only_noisy_type(self):
+        """Only the noisy type should be pruned, not others."""
+        chapters = [
+            DetectedBoundary(
+                boundary_type=BoundaryType.CHAPTER,
+                level=1,
+                title=f"Ch {i}",
+                start_offset=i * 100,
+                end_offset=i * 100 + 50,
+                line_number=i,
+                matched_text=f"{i} Ch {i}",
+            )
+            for i in range(150)  # Over limit → pruned
+        ]
+        sections = [
+            DetectedBoundary(
+                boundary_type=BoundaryType.SECTION,
+                level=2,
+                title=f"Sec {i}",
+                start_offset=i * 100 + 60,
+                end_offset=i * 100 + 90,
+                line_number=i,
+                matched_text=f"## Sec {i}",
+            )
+            for i in range(10)  # Under limit → kept
+        ]
+        pruned = _prune_implausible(chapters + sections, content_length=100000)
+        assert len(pruned) == 10
+        assert all(d.boundary_type == BoundaryType.SECTION for d in pruned)
