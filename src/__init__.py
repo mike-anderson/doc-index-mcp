@@ -1,19 +1,19 @@
 """
-MCP Knowledge Server
+MCP Doc Index Server
 
-A Model Context Protocol server for knowledge management with
-boundary-aware document chunking and semantic search.
+A Model Context Protocol server for document indexing with
+boundary-aware chunking and semantic search.
 """
 
-__all__ = ["KnowledgeServer", "main"]
+__all__ = ["DocIndexServer", "main"]
 __version__ = "0.1.0"
 
 
 def __getattr__(name):
     """Lazy import for server components that require mcp dependency."""
-    if name == "KnowledgeServer":
-        from .server import KnowledgeServer
-        return KnowledgeServer
+    if name == "DocIndexServer":
+        from .server import DocIndexServer
+        return DocIndexServer
     elif name == "main":
         from .server import main
         return main

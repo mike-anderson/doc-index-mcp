@@ -1,4 +1,4 @@
-# Knowledge Index MCP
+# Doc Index MCP
 
 ## What is This For?
 
@@ -27,12 +27,12 @@ A local-first semantic search server for your documents. Index PDFs, Word docs, 
 |-----------|-----------------|-------------|
 | Embeddings | OpenAI API / hosted model | Local ONNX model (fastembed) |
 | Vector DB | Pinecone / Weaviate / Qdrant | Local file (usearch) |
-| Storage | Cloud / managed DB | Local `.knowledge/` directory |
+| Storage | Cloud / managed DB | Local `.docindex/` directory |
 | Dependencies | PyTorch (~2GB) | ONNX Runtime (~50MB) |
 
 ## Tools
 
-### `knowledge_index`
+### `doc_index`
 Index a document for semantic search.
 
 ```json
@@ -42,7 +42,7 @@ Index a document for semantic search.
 }
 ```
 
-### `knowledge_search`
+### `doc_search`
 Search indexed documents using natural language.
 
 ```json
@@ -62,10 +62,10 @@ Parameters:
 - `max_return_tokens` - Token budget for results (default: 4096)
 - `include_siblings` - Include sibling sections when expanding
 
-### `knowledge_list`
+### `doc_list`
 List all indexed sources.
 
-### `knowledge_chunk`
+### `doc_chunk`
 Retrieve a specific chunk by ID with optional neighbors.
 
 ```json
@@ -124,12 +124,12 @@ Add to your Claude Desktop or MCP client config:
 ```json
 {
   "mcpServers": {
-    "knowledge-index": {
+    "doc-index": {
       "command": "python",
-      "args": ["/path/to/knowledge-index-mcp/src/server.py"],
+      "args": ["/path/to/doc-index-mcp/src/server.py"],
       "env": {
         "MCP_WORKING_DIR": "/path/to/your/project",
-        "KNOWLEDGE_DIR": "/path/to/store/indices"
+        "DOC_INDEX_DIR": "/path/to/store/indices"
       }
     }
   }
@@ -141,7 +141,7 @@ Add to your Claude Desktop or MCP client config:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `MCP_WORKING_DIR` | Base directory for resolving file paths | Current working directory |
-| `KNOWLEDGE_DIR` | Directory for storing vector indices | `.knowledge` in working dir |
+| `DOC_INDEX_DIR` | Directory for storing vector indices | `.docindex` in working dir |
 
 ## Architecture
 
@@ -153,7 +153,7 @@ flowchart TB
         LLM[LLM]
     end
 
-    subgraph MCP["Knowledge Index MCP Server"]
+    subgraph MCP["Doc Index MCP Server"]
         Server[server.py]
 
         subgraph Services["Local Services"]
@@ -166,7 +166,7 @@ flowchart TB
 
     subgraph Storage["Local Filesystem"]
         Docs[(Source<br/>Documents)]
-        Index[(".knowledge/<br/>├── manifest.json<br/>└── vectors/<br/>    ├── index.usearch<br/>    ├── chunks.jsonl<br/>    └── boundaries.json")]
+        Index[(".docindex/<br/>├── manifest.json<br/>└── vectors/<br/>    ├── index.usearch<br/>    ├── chunks.jsonl<br/>    └── boundaries.json")]
     end
 
     subgraph Models["Embedded Model (downloaded once)"]
@@ -210,7 +210,7 @@ flowchart LR
         J --> K[Return Results]
     end
 
-    Index -.->|stored in .knowledge/| Search
+    Index -.->|stored in .docindex/| Search
 ```
 
 ## License

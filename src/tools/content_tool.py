@@ -1,5 +1,5 @@
 """
-Content retrieval tool for the mcp-knowledge MCP server.
+Content retrieval tool for the doc-index-mcp server.
 
 Retrieves document content by structural location: boundary ID, chapter/section
 number or title, or page range. Requires the document to be indexed.

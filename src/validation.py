@@ -1,5 +1,5 @@
 """
-Input validation models for MCP Knowledge tools.
+Input validation models for MCP Doc Index tools.
 
 Provides Pydantic models with clear error messages that can be returned
 via MCP to help agents adjust their inputs.
@@ -39,7 +39,7 @@ class ValidationError(Exception):
 
 
 class IndexDocumentInput(BaseModel):
-    """Validation for knowledge_index tool."""
+    """Validation for doc_index tool."""
 
     file_path: str
     source_name: Optional[str] = None
@@ -92,7 +92,7 @@ class IndexDocumentInput(BaseModel):
 
 
 class SearchInput(BaseModel):
-    """Validation for knowledge_search tool."""
+    """Validation for doc_search tool."""
 
     query: str
     sources: Optional[list[str]] = None
@@ -162,7 +162,7 @@ class SearchInput(BaseModel):
                 raise ValueError(
                     f"sources[{i}] is empty. "
                     "Each source name must be non-empty. "
-                    "Use knowledge_list to see available sources."
+                    "Use doc_list to see available sources."
                 )
             validated.append(source.strip())
 
@@ -170,7 +170,7 @@ class SearchInput(BaseModel):
 
 
 class GetChunkInput(BaseModel):
-    """Validation for knowledge_chunk tool."""
+    """Validation for doc_chunk tool."""
 
     chunk_id: str
     neighbors: int = 0
@@ -189,7 +189,7 @@ class GetChunkInput(BaseModel):
             raise ValueError(
                 f"Invalid chunk_id format '{v}'. "
                 "Chunk IDs must contain a colon, e.g., 'source_name:position'. "
-                "Use knowledge_search to find valid chunk IDs."
+                "Use doc_search to find valid chunk IDs."
             )
 
         return v
@@ -205,7 +205,7 @@ class GetChunkInput(BaseModel):
         if v > 50:
             raise ValueError(
                 f"neighbors cannot exceed 50, got {v}. "
-                "For larger context, use expand_to_boundary in knowledge_search."
+                "For larger context, use expand_to_boundary in doc_search."
             )
         return v
 
@@ -249,7 +249,7 @@ class ReadDocumentInput(BaseModel):
         if v > 10000000:
             raise ValueError(
                 f"max_chars cannot exceed 10,000,000, got {v}. "
-                "For very large documents, consider indexing with knowledge_index instead."
+                "For very large documents, consider indexing with doc_index instead."
             )
         return v
 
@@ -339,7 +339,7 @@ class ExtractTableInput(BaseModel):
 
 
 class TocInput(BaseModel):
-    """Validation for knowledge_toc tool."""
+    """Validation for doc_toc tool."""
 
     source_name: str
     max_depth: int = 3
@@ -350,7 +350,7 @@ class TocInput(BaseModel):
         if not v or not v.strip():
             raise ValueError(
                 "source_name is required. "
-                "Use knowledge_list to see available indexed sources."
+                "Use doc_list to see available indexed sources."
             )
         return v.strip()
 
@@ -371,7 +371,7 @@ class TocInput(BaseModel):
 
 
 class GetContentInput(BaseModel):
-    """Validation for knowledge_get_content tool."""
+    """Validation for doc_get_content tool."""
 
     source_name: str
     boundary_id: Optional[str] = None
@@ -387,7 +387,7 @@ class GetContentInput(BaseModel):
         if not v or not v.strip():
             raise ValueError(
                 "source_name is required. "
-                "Use knowledge_list to see available indexed sources."
+                "Use doc_list to see available indexed sources."
             )
         return v.strip()
 
@@ -424,7 +424,7 @@ class GetContentInput(BaseModel):
         if len(provided) == 0:
             raise ValueError(
                 "At least one locator is required: boundary_id, chapter, section, or pages. "
-                "Use knowledge_toc to see available boundaries."
+                "Use doc_toc to see available boundaries."
             )
         if len(provided) > 1:
             raise ValueError(

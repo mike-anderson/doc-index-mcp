@@ -1,5 +1,5 @@
 """
-Chunking service for the mcp-knowledge system.
+Chunking service for the doc-index-mcp server.
 
 Provides boundary-aware document chunking optimized for embedding models
 with limited context windows (e.g., 256 tokens for all-MiniLM-L6-v2).

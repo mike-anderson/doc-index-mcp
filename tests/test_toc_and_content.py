@@ -1,4 +1,4 @@
-"""Integration tests for knowledge_toc and knowledge_get_content tools."""
+"""Integration tests for doc_toc and doc_get_content tools."""
 
 import pytest
 from .conftest import run_search

@@ -1,11 +1,11 @@
-"""Install the knowledge-index-mcp Claude skill into the current directory."""
+"""Install the doc-index-mcp Claude skill into the current directory."""
 
 import os
 import shutil
 import sys
 
 
-SKILL_DIR_NAME = "knowledge-search"
+SKILL_DIR_NAME = "doc-search"
 SKILL_FILENAME = "SKILL.md"
 
 
@@ -27,7 +27,7 @@ def main():
         print(f"Skill already exists at {target_path} — overwriting.")
 
     shutil.copy2(pkg_skill, target_path)
-    print(f"Installed knowledge-search skill to {target_path}")
+    print(f"Installed doc-search skill to {target_path}")
 
 
 if __name__ == "__main__":

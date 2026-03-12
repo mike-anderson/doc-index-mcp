@@ -1,15 +1,15 @@
 """
-MCP Knowledge Index Server
+MCP Doc Index Server
 
 Provides semantic search over indexed documents with boundary-aware chunking.
 
 Tools:
-- knowledge_index: Index a document (PDF, TXT, MD, DOCX, PPTX, XLSX)
-- knowledge_search: Semantic and text search with boundary expansion
-- knowledge_toc: Get document table of contents (chapters, sections, subsections)
-- knowledge_get_content: Retrieve content by boundary ID, chapter/section title, or page range
-- knowledge_list: List indexed sources
-- knowledge_chunk: Retrieve specific chunks
+- doc_index: Index a document (PDF, TXT, MD, DOCX, PPTX, XLSX)
+- doc_search: Semantic and text search with boundary expansion
+- doc_toc: Get document table of contents (chapters, sections, subsections)
+- doc_get_content: Retrieve content by boundary ID, chapter/section title, or page range
+- doc_list: List indexed sources
+- doc_chunk: Retrieve specific chunks
 - read_document: Read documents without indexing (PDF, Word, PowerPoint, Excel)
 - list_tables: List all tables in a document
 - extract_table: Extract a specific table as CSV
@@ -76,7 +76,7 @@ SUPPORTED_TABLE_FORMATS = [".pdf", ".docx", ".xlsx", ".xls"]
 
 # Search tool schema
 SEARCH_TOOL_SCHEMA = {
-    "name": "knowledge_search",
+    "name": "doc_search",
     "description": "Hybrid semantic + text search over indexed documents. Returns ~256-token chunks. Use expand_to_boundary to get full sections/chapters; increase max_return_tokens when expanding.",
     "inputSchema": {
         "type": "object",
@@ -129,27 +129,27 @@ def _count_toc_entries(entries) -> int:
     return count
 
 
-class KnowledgeServer:
-    """MCP server for knowledge management."""
+class DocIndexServer:
+    """MCP server for document indexing and search."""
 
-    def __init__(self, knowledge_dir: str = ".knowledge"):
+    def __init__(self, index_dir: str = ".docindex"):
         """
-        Initialize the knowledge server.
+        Initialize the doc index server.
 
         Args:
-            knowledge_dir: Directory for storing indices and metadata.
-                          Default is .knowledge in current directory
+            index_dir: Directory for storing indices and metadata.
+                       Default is .docindex in current directory
         """
         # Working directory for resolving relative file paths
         # Set via MCP_WORKING_DIR env var (should match Claude's cwd)
         self.working_dir = os.environ.get("MCP_WORKING_DIR", os.getcwd())
 
-        # Knowledge dir defaults to .knowledge in working directory
-        self.knowledge_dir = os.environ.get("KNOWLEDGE_DIR", knowledge_dir)
-        if not os.path.isabs(self.knowledge_dir):
-            self.knowledge_dir = os.path.join(self.working_dir, self.knowledge_dir)
+        # Index dir defaults to .docindex in working directory
+        self.index_dir = os.environ.get("DOC_INDEX_DIR", index_dir)
+        if not os.path.isabs(self.index_dir):
+            self.index_dir = os.path.join(self.working_dir, self.index_dir)
 
-        self.server = Server("knowledge-index-mcp")
+        self.server = Server("doc-index-mcp")
 
         # Storage
         self.stores: dict[str, vector_store.VectorStore] = {}
@@ -197,8 +197,9 @@ class KnowledgeServer:
         async def list_tools():
             return [
                 Tool(
-                    name="knowledge_index",
-                    description="Index a document for semantic search. Detects document structure (chapters, sections, pages) as boundaries. Search with knowledge_search after indexing.",
+                    name="doc_index",
+                    description="Index a document for semantic search. Detects document structure (chapters, sections, pages) as boundaries. Search with doc_search after indexing.",
+
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -216,16 +217,16 @@ class KnowledgeServer:
                 ),
                 Tool(**SEARCH_TOOL_SCHEMA),
                 Tool(
-                    name="knowledge_list",
-                    description="List all indexed knowledge sources",
+                    name="doc_list",
+                    description="List all indexed document sources",
                     inputSchema={
                         "type": "object",
                         "properties": {},
                     },
                 ),
                 Tool(
-                    name="knowledge_chunk",
-                    description="Retrieve a chunk by ID (from search results) with optional neighbors. Prefer expand_to_boundary in knowledge_search for structure-aware context.",
+                    name="doc_chunk",
+                    description="Retrieve a chunk by ID (from search results) with optional neighbors. Prefer expand_to_boundary in doc_search for structure-aware context.",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -244,7 +245,7 @@ class KnowledgeServer:
                 ),
                 Tool(
                     name="read_document",
-                    description="Read document text without indexing. For repeated searches, use knowledge_index instead.",
+                    description="Read document text without indexing. For repeated searches, use doc_index instead.",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -308,14 +309,14 @@ class KnowledgeServer:
                     },
                 ),
                 Tool(
-                    name="knowledge_toc",
-                    description="Get the table of contents (chapters, sections, subsections) for an indexed document. Use this to understand document structure before retrieving specific content with knowledge_get_content.",
+                    name="doc_toc",
+                    description="Get the table of contents (chapters, sections, subsections) for an indexed document. Use this to understand document structure before retrieving specific content with doc_get_content.",
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "source_name": {
                                 "type": "string",
-                                "description": "Name of the indexed source (from knowledge_list)",
+                                "description": "Name of the indexed source (from doc_list)",
                             },
                             "max_depth": {
                                 "type": "number",
@@ -327,18 +328,18 @@ class KnowledgeServer:
                     },
                 ),
                 Tool(
-                    name="knowledge_get_content",
-                    description="Retrieve document content by structural location. Use knowledge_toc first to find boundary IDs, chapter/section titles, or page numbers. Provide exactly one locator: boundary_id, chapter, section, or pages.",
+                    name="doc_get_content",
+                    description="Retrieve document content by structural location. Use doc_toc first to find boundary IDs, chapter/section titles, or page numbers. Provide exactly one locator: boundary_id, chapter, section, or pages.",
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "source_name": {
                                 "type": "string",
-                                "description": "Name of the indexed source (from knowledge_list)",
+                                "description": "Name of the indexed source (from doc_list)",
                             },
                             "boundary_id": {
                                 "type": "string",
-                                "description": "Boundary ID from knowledge_toc (e.g., 'chapter:3', 'section:7')",
+                                "description": "Boundary ID from doc_toc (e.g., 'chapter:3', 'section:7')",
                             },
                             "chapter": {
                                 "type": "string",
@@ -371,18 +372,18 @@ class KnowledgeServer:
         @self.server.call_tool()
         async def call_tool(name: str, arguments: dict):
             try:
-                if name == "knowledge_index":
+                if name == "doc_index":
                     validated = validate_input(IndexDocumentInput, arguments)
                     result = await self._index_document(
                         file_path=validated["file_path"],
                         source_name=validated.get("source_name"),
                     )
-                elif name == "knowledge_search":
+                elif name == "doc_search":
                     validated = validate_input(SearchInput, arguments)
                     result = await self._search(validated)
-                elif name == "knowledge_list":
+                elif name == "doc_list":
                     result = await self._list_sources()
-                elif name == "knowledge_chunk":
+                elif name == "doc_chunk":
                     validated = validate_input(GetChunkInput, arguments)
                     result = await self._get_chunk(
                         chunk_id=validated["chunk_id"],
@@ -408,13 +409,13 @@ class KnowledgeServer:
                         max_rows=validated.get("max_rows"),
                         include_headers=validated.get("include_headers", True),
                     )
-                elif name == "knowledge_toc":
+                elif name == "doc_toc":
                     validated = validate_input(TocInput, arguments)
                     result = await self._get_toc(
                         source_name=validated["source_name"],
                         max_depth=validated.get("max_depth", 3),
                     )
-                elif name == "knowledge_get_content":
+                elif name == "doc_get_content":
                     validated = validate_input(GetContentInput, arguments)
                     result = await self._get_content(validated)
                 else:
@@ -658,7 +659,7 @@ class KnowledgeServer:
         if source_name not in self.boundary_indices:
             return {
                 "error": f"Source '{source_name}' not found or not indexed.",
-                "suggestion": "Use knowledge_list to see available sources, or knowledge_index to index a document first.",
+                "suggestion": "Use doc_list to see available sources, or doc_index to index a document first.",
             }
 
         boundary_index = self.boundary_indices[source_name]
@@ -679,7 +680,7 @@ class KnowledgeServer:
         if source_name not in self.stores:
             return {
                 "error": f"Source '{source_name}' not found or not indexed.",
-                "suggestion": "Use knowledge_list to see available sources, or knowledge_index to index a document first.",
+                "suggestion": "Use doc_list to see available sources, or doc_index to index a document first.",
             }
 
         store = self.stores[source_name]
@@ -731,7 +732,7 @@ class KnowledgeServer:
         if not response.content:
             return {
                 "error": "No content found for the specified location.",
-                "suggestion": "Use knowledge_toc to see available boundaries and their IDs.",
+                "suggestion": "Use doc_toc to see available boundaries and their IDs.",
             }
 
         return {
@@ -745,7 +746,7 @@ class KnowledgeServer:
 
     async def _save_source(self, source_name: str, boundary_index: Any):
         """Save a source's vector store and boundary index to disk."""
-        source_dir = os.path.join(self.knowledge_dir, "vectors", source_name)
+        source_dir = os.path.join(self.index_dir, "vectors", source_name)
         os.makedirs(source_dir, exist_ok=True)
 
         # Save vector store
@@ -760,15 +761,15 @@ class KnowledgeServer:
 
     async def _save_manifest(self):
         """Save manifest to disk."""
-        os.makedirs(self.knowledge_dir, exist_ok=True)
-        manifest_path = os.path.join(self.knowledge_dir, "manifest.json")
+        os.makedirs(self.index_dir, exist_ok=True)
+        manifest_path = os.path.join(self.index_dir, "manifest.json")
 
         with open(manifest_path, "w") as f:
             json.dump(self.manifest, f, indent=2)
 
     async def load_existing_stores(self):
         """Load existing indices from disk on startup."""
-        manifest_path = os.path.join(self.knowledge_dir, "manifest.json")
+        manifest_path = os.path.join(self.index_dir, "manifest.json")
 
         if not os.path.exists(manifest_path):
             return
@@ -783,7 +784,7 @@ class KnowledgeServer:
             if source_name in self.stores:
                 continue
 
-            source_dir = os.path.join(self.knowledge_dir, "vectors", source_name)
+            source_dir = os.path.join(self.index_dir, "vectors", source_name)
 
             if not os.path.exists(source_dir):
                 continue
@@ -822,7 +823,7 @@ class KnowledgeServer:
 
 def main():
     """Entry point for the MCP server."""
-    server = KnowledgeServer()
+    server = DocIndexServer()
     asyncio.run(server.run())
 
 

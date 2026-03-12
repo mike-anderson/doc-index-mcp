@@ -1,5 +1,5 @@
 """
-Table of contents tool for the mcp-knowledge MCP server.
+Table of contents tool for the doc-index-mcp server.
 
 Extracts hierarchical document structure (chapters, sections, subsections)
 from indexed documents or by scanning unindexed documents on-the-fly.

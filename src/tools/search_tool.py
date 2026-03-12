@@ -1,5 +1,5 @@
 """
-Search tool for the mcp-knowledge MCP server.
+Search tool for the doc-index-mcp server.
 
 Provides hybrid semantic + text search across indexed documents with
 boundary-aware expansion capabilities. Semantic search uses vector
@@ -26,7 +26,7 @@ except ImportError:
 
 @dataclass
 class SearchParams:
-    """Parameters for knowledge search."""
+    """Parameters for document search."""
     # Core search parameters
     query: str
     sources: Optional[list[str]] = None
@@ -56,7 +56,7 @@ class SearchResultItem:
 
 @dataclass
 class SearchResponse:
-    """Response from knowledge search."""
+    """Response from document search."""
     results: list[SearchResultItem] = field(default_factory=list)
     total_tokens: int = 0
     query: str = ""

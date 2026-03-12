@@ -1,5 +1,5 @@
 """
-MCP Tools for the Knowledge Server.
+MCP Tools for the Doc Index Server.
 
 Note: Submodules are not imported at package level to support lazy dependency loading.
 Import directly from submodules: from tools.search_tool import SearchParams
