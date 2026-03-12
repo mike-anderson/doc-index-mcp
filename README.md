@@ -5,7 +5,7 @@ A local-first semantic search server for your documents. Index PDFs, Word docs, 
 - **Semantic search** - Find relevant content using natural language queries
 - **Boundary-aware chunking** - Respects document structure (chapters, sections, headers)
 - **Table extraction** - Extract tables from documents as CSV
-- **Fully local** - No external APIs, no cloud services, no PyTorch
+- **Fully local** - No external APIs, no cloud services, no Docker containers, no PyTorch
 - **Lightweight** - ONNX-based embeddings (~50MB vs ~2GB for PyTorch)
 
 ## Quick Start
