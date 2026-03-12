@@ -21,7 +21,7 @@ class TestEconomicReportBoundaryDetection:
         """The Economic Report has ~10 chapters, not thousands."""
         store, boundary_index, source = economic_report_indexed
         chapter_boundaries = [
-            b for b in boundary_index.boundaries.values()
+            b for b in boundary_index.boundaries
             if b.type.value == "chapter"
         ]
         # Should be a reasonable number, not the 4090 false positives we had before
@@ -32,10 +32,10 @@ class TestEconomicReportBoundaryDetection:
     async def test_boundaries_are_not_toc_entries(self, economic_report_indexed):
         """Boundaries should not be table-of-contents entries with dot-leaders."""
         store, boundary_index, source = economic_report_indexed
-        for bid, b in boundary_index.boundaries.items():
+        for b in boundary_index.boundaries:
             if b.title:
                 assert "..." not in b.title, (
-                    f"Boundary {bid} looks like a TOC entry: {b.title!r}"
+                    f"Boundary {b.id} looks like a TOC entry: {b.title!r}"
                 )
 
 
