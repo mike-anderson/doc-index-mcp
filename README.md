@@ -14,7 +14,7 @@ A local-first semantic search server for your documents. Index PDFs, Word docs, 
 
 ### 1. Add to your MCP config
 
-Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). If you don't have uv, see [Install from source](#install-from-source) below.
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). If you don't have uv, see [Alternative Installation](#alternative-installation) below.
 
 Add to `.mcp.json` in your project root (for Claude Code) or your Claude Desktop config:
 
@@ -162,31 +162,44 @@ Extract a specific table as CSV.
 | `MCP_WORKING_DIR` | Base directory for resolving file paths | Current working directory |
 | `DOC_INDEX_DIR` | Directory for storing vector indices | `.docindex` in working dir |
 
-## Install from Source
+## Alternative Installation
 
-If you don't have `uv`, you can clone the repo and install with pip:
-
-```bash
-git clone https://github.com/mike-anderson/doc-index-mcp.git
-cd doc-index-mcp
-pip install .
-```
-
-Or with uv:
+### Install globally with pip
 
 ```bash
-git clone https://github.com/mike-anderson/doc-index-mcp.git
-cd doc-index-mcp
-uv pip install .
+pip install doc-index-mcp
 ```
 
-Then use the installed command in your `.mcp.json`:
+Then in your `.mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "doc-index": {
       "command": "doc-index-mcp"
+    }
+  }
+}
+```
+
+### Install from source
+
+Clone the repo and install dependencies:
+
+```bash
+git clone https://github.com/mike-anderson/doc-index-mcp.git
+cd doc-index-mcp
+pip install -e .
+```
+
+Then point your `.mcp.json` at the server entrypoint:
+
+```json
+{
+  "mcpServers": {
+    "doc-index": {
+      "command": "python",
+      "args": ["/path/to/doc-index-mcp/src/server.py"]
     }
   }
 }
