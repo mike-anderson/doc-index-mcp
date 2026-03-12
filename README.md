@@ -1,5 +1,7 @@
 # Doc Index MCP
 
+## What is This For?
+
 A local-first semantic search server for your documents. Index PDFs, Word docs, PowerPoints, Excel files, and text/markdown, then search them using natural language via the Model Context Protocol (MCP).
 
 - **Semantic search** - Find relevant content using natural language queries
