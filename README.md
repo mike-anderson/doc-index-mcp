@@ -1,7 +1,5 @@
 # Doc Index MCP
 
-## What is This For?
-
 A local-first semantic search server for your documents. Index PDFs, Word docs, PowerPoints, Excel files, and text/markdown, then search them using natural language via the Model Context Protocol (MCP).
 
 - **Semantic search** - Find relevant content using natural language queries
@@ -9,6 +7,33 @@ A local-first semantic search server for your documents. Index PDFs, Word docs, 
 - **Table extraction** - Extract tables from documents as CSV
 - **Fully local** - No external APIs, no cloud services, no PyTorch
 - **Lightweight** - ONNX-based embeddings (~50MB vs ~2GB for PyTorch)
+
+## Quick Start
+
+### 1. Add to your MCP config
+
+Add to `.mcp.json` in your project root (for Claude Code) or your Claude Desktop config:
+
+```json
+{
+  "mcpServers": {
+    "doc-index": {
+      "command": "uvx",
+      "args": ["doc-index-mcp"]
+    }
+  }
+}
+```
+
+### 2. Install the Claude skill (optional)
+
+The skill teaches Claude how to use the search tools effectively (token budgets, boundary expansion, etc.):
+
+```bash
+uvx --from doc-index-mcp doc-index-install-skill
+```
+
+That's it — start asking Claude to index and search your documents.
 
 ## Supported Formats
 
@@ -102,37 +127,6 @@ Extract a specific table as CSV.
   "file_path": "data.xlsx",
   "table_index": 0,
   "max_rows": 100
-}
-```
-
-## Installation
-
-```bash
-pip install -r requirements.txt
-```
-
-Or with uv:
-
-```bash
-uv pip install -r requirements.txt
-```
-
-## Configuration
-
-Add to your Claude Desktop or MCP client config:
-
-```json
-{
-  "mcpServers": {
-    "doc-index": {
-      "command": "python",
-      "args": ["/path/to/doc-index-mcp/src/server.py"],
-      "env": {
-        "MCP_WORKING_DIR": "/path/to/your/project",
-        "DOC_INDEX_DIR": "/path/to/store/indices"
-      }
-    }
-  }
 }
 ```
 
