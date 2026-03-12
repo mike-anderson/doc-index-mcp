@@ -85,7 +85,7 @@ Parameters:
 - `query` - Search query
 - `sources` - Filter to specific sources (optional)
 - `top_k` - Number of results (default: 5)
-- `expand_to_boundary` - Expand results to full "section" or "chapter"
+- `expand_to_boundary` - Expand results to full "chapter", "section", "subsection", or "page"
 - `max_return_tokens` - Token budget for results (default: 4096)
 - `include_siblings` - Include sibling sections when expanding
 
@@ -99,6 +99,27 @@ Retrieve a specific chunk by ID with optional neighbors.
 {
   "chunk_id": "manual:42",
   "neighbors": 2
+}
+```
+
+### `doc_toc`
+Get the table of contents (chapters, sections, subsections) for an indexed document. Use this to understand document structure before retrieving specific content.
+
+```json
+{
+  "source_name": "manual",
+  "max_depth": 3
+}
+```
+
+### `doc_get_content`
+Retrieve document content by structural location. Provide exactly one locator: `boundary_id`, `chapter`, `section`, or `pages`.
+
+```json
+{
+  "source_name": "manual",
+  "chapter": "3",
+  "max_return_tokens": 8192
 }
 ```
 
