@@ -29,15 +29,36 @@ Add to `.mcp.json` in your project root (for Claude Code) or your Claude Desktop
 }
 ```
 
-### 2. Install the Claude skill (optional)
+### 2. Install the skill (optional)
 
-The skill teaches Claude how to use the search tools effectively (token budgets, boundary expansion, etc.):
+The skill teaches the agent how to use the search tools effectively (token budgets, boundary expansion, structure-first retrieval):
 
 ```bash
 uvx --from doc-index-mcp doc-index-install-skill
 ```
 
 That's it — start asking Claude to index and search your documents.
+
+<details>
+<summary>Other agents</summary>
+
+**Hermes Agent** reads skills from `~/.hermes/skills/<category>/` rather than per-project, and configures MCP servers in `~/.hermes/config.yaml`:
+
+```bash
+uvx --from doc-index-mcp doc-index-install-skill --target hermes
+```
+
+```yaml
+mcp_servers:
+  doc-index:
+    command: uvx
+    args:
+      - doc-index-mcp
+```
+
+The installer honours `HERMES_HOME`, so non-default profiles install to the right place. Restart the Hermes session afterwards so the skill is picked up.
+
+</details>
 
 ## Supported Formats
 

@@ -1,3 +1,8 @@
+---
+name: doc-search
+description: "Semantic search over indexed PDFs, Word, PowerPoint, Excel, and markdown via the doc-index MCP server. Use when answering questions from indexed documents, or when a document is too large to read in full."
+---
+
 # Doc Index MCP — Usage Guide
 
 ## Key Concept: Boundaries
@@ -26,6 +31,16 @@ doc_search(query="data pipeline", expand_to_boundary="chapter", top_k=1, max_ret
 doc_search(query="auth", expand_to_boundary="section", include_siblings=true, max_return_tokens=16384)
 ```
 
+## Structure-first retrieval
+
+When you already know roughly where the answer lives, skip search entirely. Read the outline, then fetch that part directly — cheaper and more complete than guessing at a query:
+```
+doc_toc(source_name="manual", max_depth=2)
+doc_get_content(source_name="manual", chapter="3", max_return_tokens=8192)
+```
+
+`doc_get_content` takes exactly one locator: `boundary_id`, `chapter`, `section`, or `pages`.
+
 ## When to Use What
 
 | Need | Approach |
@@ -35,7 +50,9 @@ doc_search(query="auth", expand_to_boundary="section", include_siblings=true, ma
 | Whole topic area | `expand_to_boundary="chapter"`, top_k=1 |
 | What else is in same chapter | `include_siblings=true` + expansion |
 | Exact phrase | Just search — exact matches auto-boost |
+| Know the structure already | `doc_toc` then `doc_get_content` |
 | Specific table data | `list_tables` then `extract_table` |
+| One-off read, no reuse | `read_document` (skips indexing) |
 
 ## Critical: Token Budget
 
