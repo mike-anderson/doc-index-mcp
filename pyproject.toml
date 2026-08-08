@@ -4,13 +4,17 @@ build-backend = "hatchling.build"
 
 [project]
 name = "doc-index-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "MCP server for semantic document search with boundary-aware chunking"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
 dependencies = [
-    "mcp>=1.0.0",
+    # Capped below 2.0: mcp 2.0 removed the low-level decorator API
+    # (Server.list_tools / Server.call_tool) that src/server.py builds on,
+    # replacing it with add_request_handler. Lifting this cap requires
+    # porting _setup_handlers first.
+    "mcp>=1.0.0,<2",
     "pydantic>=2.0.0",
     "numpy>=1.24.0",
     # Embedding - ONNX-based, lightweight (~50x smaller than PyTorch)
