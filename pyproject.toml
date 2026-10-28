@@ -4,17 +4,25 @@ build-backend = "hatchling.build"
 
 [project]
 name = "doc-index-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "MCP server for semantic document search with boundary-aware chunking"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
+keywords = ["mcp", "semantic-search", "document-indexing", "rag", "embeddings"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
 dependencies = [
-    # Capped below 2.0: mcp 2.0 removed the low-level decorator API
-    # (Server.list_tools / Server.call_tool) that src/server.py builds on,
-    # replacing it with add_request_handler. Lifting this cap requires
-    # porting _setup_handlers first.
-    "mcp>=1.0.0,<2",
+    # 2.x: src/server.py registers handlers via Server(on_list_tools=...,
+    # on_call_tool=...), which replaced the 1.x decorator API. Capped below
+    # the next major so a future breaking release can't reach uvx users.
+    "mcp>=2.0.0,<3",
     "pydantic>=2.0.0",
     "numpy>=1.24.0",
     # Embedding - ONNX-based, lightweight (~50x smaller than PyTorch)
@@ -29,6 +37,11 @@ dependencies = [
     "python-pptx>=0.6.21",
     "openpyxl>=3.1.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/mike-anderson/doc-index-mcp"
+Repository = "https://github.com/mike-anderson/doc-index-mcp"
+Issues = "https://github.com/mike-anderson/doc-index-mcp/issues"
 
 [project.optional-dependencies]
 cuda = [
@@ -52,4 +65,5 @@ artifacts = ["src/skills/**/*.md"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["src/tests", "tests"]

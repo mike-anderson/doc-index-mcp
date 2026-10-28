@@ -18,12 +18,14 @@ Tools:
 import asyncio
 import json
 import os
+import sys
 from datetime import datetime
+from importlib.metadata import PackageNotFoundError, version
 from typing import Optional, Any
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent
+from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool
 
 try:
     # Relative imports for when running as part of the package
@@ -149,8 +151,6 @@ class DocIndexServer:
         if not os.path.isabs(self.index_dir):
             self.index_dir = os.path.join(self.working_dir, self.index_dir)
 
-        self.server = Server("doc-index-mcp")
-
         # Storage
         self.stores: dict[str, vector_store.VectorStore] = {}
         self.boundary_indices: dict[str, chunker.BoundaryIndex] = {}
@@ -159,7 +159,7 @@ class DocIndexServer:
         # Initialize embedder
         self._embedder = Embedder()
 
-        # Setup handlers
+        # Create the MCP server with its tool handlers
         self._setup_handlers()
 
     def _resolve_path(self, file_path: str) -> str:
@@ -191,11 +191,10 @@ class DocIndexServer:
         return resolved
 
     def _setup_handlers(self):
-        """Register MCP tool handlers."""
+        """Create the MCP server and register its tool handlers."""
 
-        @self.server.list_tools()
-        async def list_tools():
-            return [
+        async def list_tools(ctx, params):
+            return ListToolsResult(tools=[
                 Tool(
                     name="doc_index",
                     description="Index a document for semantic search. Detects document structure (chapters, sections, pages) as boundaries. Search with doc_search after indexing.",
@@ -367,10 +366,12 @@ class DocIndexServer:
                         "required": ["source_name"],
                     },
                 ),
-            ]
+            ])
 
-        @self.server.call_tool()
-        async def call_tool(name: str, arguments: dict):
+        async def call_tool(ctx, params):
+            return CallToolResult(content=await dispatch(params.name, params.arguments or {}))
+
+        async def dispatch(name: str, arguments: dict):
             try:
                 if name == "doc_index":
                     validated = validate_input(IndexDocumentInput, arguments)
@@ -437,6 +438,18 @@ class DocIndexServer:
                 }, indent=2))]
             except Exception as e:
                 return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
+
+        try:
+            server_version = version("doc-index-mcp")
+        except PackageNotFoundError:
+            server_version = ""
+
+        self.server = Server(
+            "doc-index-mcp",
+            version=server_version,
+            on_list_tools=list_tools,
+            on_call_tool=call_tool,
+        )
 
     async def _index_document(
         self,
@@ -795,7 +808,7 @@ class DocIndexServer:
                 await store.load(source_dir)
                 self.stores[source_name] = store
             except Exception as e:
-                print(f"Warning: Failed to load store for {source_name}: {e}")
+                print(f"Warning: Failed to load store for {source_name}: {e}", file=sys.stderr)
                 continue
 
             # Load boundary index
@@ -804,7 +817,7 @@ class DocIndexServer:
                 try:
                     self.boundary_indices[source_name] = chunker.BoundaryIndex.load(boundary_path)
                 except Exception as e:
-                    print(f"Warning: Failed to load boundaries for {source_name}: {e}")
+                    print(f"Warning: Failed to load boundaries for {source_name}: {e}", file=sys.stderr)
                     self.boundary_indices[source_name] = chunker.BoundaryIndex()
             else:
                 self.boundary_indices[source_name] = chunker.BoundaryIndex()
