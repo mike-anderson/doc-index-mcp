@@ -6,7 +6,7 @@ boundary-aware chunking and semantic search.
 """
 
 __all__ = ["DocIndexServer", "main"]
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 
 
 def __getattr__(name):
